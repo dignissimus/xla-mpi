@@ -4,8 +4,13 @@
 namespace xla_mpi {
 
 class MpiDevice {
+private:
+    int id_;
+
 public:
-    int id() const { return 0; }
+    explicit MpiDevice(int id) : id_(id) {}
+
+    int id() const { return id_; }
 };
 
 class MpiClient {

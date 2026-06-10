@@ -35,7 +35,10 @@ static const PJRT_Api pjrt_api = {
     .PJRT_Client_PlatformVersion = MPI_Client_PlatformVersion,
     .PJRT_Client_Devices = MPI_Client_Devices,
     .PJRT_Client_AddressableDevices = MPI_Client_AddressableDevices,
+    .PJRT_Client_LookupDevice = MPI_Client_LookupDevice,
+    .PJRT_Client_LookupAddressableDevice = MPI_Client_LookupAddressableDevice,
     .PJRT_Client_AddressableMemories = MPI_Client_AddressableMemories,
+    .PJRT_Client_DefaultDeviceAssignment = MPI_Client_DefaultDeviceAssignment,
 
     .PJRT_DeviceDescription_Id = MPI_DeviceDescription_Id,
     .PJRT_DeviceDescription_ProcessIndex = MPI_DeviceDescription_ProcessIndex,
@@ -57,13 +60,15 @@ static const PJRT_Api pjrt_api = {
     .PJRT_Memory_ToString = MPI_Memory_ToString,
     .PJRT_Memory_AddressableByDevices = MPI_Memory_AddressableByDevices,
 
-    .PJRT_TopologyDescription_Create = nullptr,
+    .PJRT_TopologyDescription_Create = MPI_TopologyDescription_Create,
     .PJRT_TopologyDescription_Destroy = MPI_TopologyDescription_Destroy,
     .PJRT_TopologyDescription_PlatformName = MPI_TopologyDescription_PlatformName,
     .PJRT_TopologyDescription_PlatformVersion = MPI_TopologyDescription_PlatformVersion,
     .PJRT_TopologyDescription_GetDeviceDescriptions = MPI_TopologyDescription_GetDeviceDescriptions,
     .PJRT_TopologyDescription_Serialize = nullptr,
     .PJRT_TopologyDescription_Attributes = MPI_TopologyDescription_Attributes,
+
+    .PJRT_Compile = MPI_Compile,
 
     .PJRT_Client_TopologyDescription = MPI_Client_TopologyDescription,
 };

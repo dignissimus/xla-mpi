@@ -23,6 +23,7 @@ struct PJRT_Memory;
 struct PJRT_Client {
     std::unique_ptr<xla_mpi::MpiClient> client;
     std::vector<PJRT_Device*> devices;
+    std::vector<PJRT_Device*> addressable_devices;
     std::vector<PJRT_DeviceDescription*> device_descriptions;
     std::vector<PJRT_Memory*> memories;
     PJRT_TopologyDescription* topology = nullptr;
@@ -37,6 +38,7 @@ struct PJRT_Device {
 
 struct PJRT_DeviceDescription {
     PJRT_Device* device = nullptr; 
+    std::string debug_string;
 };
 
 struct PJRT_Memory {

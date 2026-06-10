@@ -18,12 +18,17 @@ PJRT_Error* MPI_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args) {
 }
 
 PJRT_Error* MPI_DeviceDescription_ProcessIndex(PJRT_DeviceDescription_ProcessIndex_Args* args) {
+    // TODO: Check assumptions
+    // TODO: Process index into what?
+    return 0;
     if (args->device_description && args->device_description->device) {
         args->process_index = args->device_description->device->device
                                   ? args->device_description->device->device->id()
                                   : 0;
+        std::cerr << "If branch" <<  args->process_index <<std::endl;
     } else {
         args->process_index = 0;
+        std::cerr << "Else branch" << args->process_index << std::endl;
     }
     return nullptr;
 }
@@ -42,10 +47,9 @@ PJRT_Error* MPI_DeviceDescription_Kind(PJRT_DeviceDescription_Kind_Args* args) {
 }
 
 PJRT_Error* MPI_DeviceDescription_DebugString(PJRT_DeviceDescription_DebugString_Args* args) {
-    // TODO: Also print rank?
-    static const char* str = "MPI_Node";
-    args->debug_string = str;
-    args->debug_string_size = 8;
+    const std::string& debug_string = args->device_description->debug_string;
+    args->debug_string = debug_string.data();
+    args->debug_string_size = debug_string.size();
     return nullptr;
 }
 
@@ -86,10 +90,11 @@ PJRT_Error* MPI_Device_AddressableMemories(PJRT_Device_AddressableMemories_Args*
         args->memories = mem_array;
         args->num_memories = 1;
     } else {
+        // TODO: Might want to assert that we're not in this branch
+        // XLA might have CHECK macro?
         args->memories = nullptr;
         args->num_memories = 0;
     }
-    // return MakeError("MPI Device Addressable Memories not implemented.");
     return nullptr;
 }
 

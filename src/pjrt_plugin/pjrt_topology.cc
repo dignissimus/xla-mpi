@@ -43,3 +43,15 @@ PJRT_Error* MPI_TopologyDescription_Destroy(PJRT_TopologyDescription_Destroy_Arg
     // TODO: Memory ownership
     return nullptr;
 }
+
+
+PJRT_Error* MPI_TopologyDescription_Create(PJRT_TopologyDescription_Create_Args* args) {
+    args->topology = nullptr;
+    return nullptr;
+}
+
+PJRT_Error* MPI_TopologyDescription_Serialize(PJRT_TopologyDescription_Serialize_Args* args) {
+    return MakeError("TopologyDescription_Serialize not implemented",
+                     PJRT_Error_Code_UNIMPLEMENTED);
+}
+
