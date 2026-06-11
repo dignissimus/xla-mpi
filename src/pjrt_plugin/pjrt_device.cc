@@ -20,7 +20,6 @@ PJRT_Error* MPI_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args) {
 PJRT_Error* MPI_DeviceDescription_ProcessIndex(PJRT_DeviceDescription_ProcessIndex_Args* args) {
     // TODO: Check assumptions
     // TODO: Process index into what?
-    return 0;
     if (args->device_description && args->device_description->device) {
         args->process_index = args->device_description->device->device
                                   ? args->device_description->device->device->id()
