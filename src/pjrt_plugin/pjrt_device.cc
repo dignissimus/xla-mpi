@@ -7,10 +7,8 @@
 #include <string>
 
 PJRT_Error* MPI_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args) {
-    if (args->device_description && args->device_description->device) {
-        args->id = args->device_description->device->device
-                       ? args->device_description->device->device->id()
-                       : 0;
+    if (args->device_description) {
+        args->id = args->device_description->mpi_rank
     } else {
         args->id = 0;
     }
