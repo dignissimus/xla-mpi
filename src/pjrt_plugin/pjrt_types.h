@@ -38,6 +38,7 @@ struct PJRT_Device {
 
 struct PJRT_DeviceDescription {
     PJRT_Device* device = nullptr; 
+    int mpi_rank{};
     std::string debug_string;
 };
 

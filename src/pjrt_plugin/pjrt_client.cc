@@ -44,6 +44,7 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
             PJRT_DeviceDescription* description = new PJRT_DeviceDescription();
             description->device = device;
             description->debug_string = "mpi_rank_" + std::to_string(i);
+            description->mpi_rank = i;
             device->description = description;
 
                 // TODO: Unsure if non-addressable gets PJRT_Memory
