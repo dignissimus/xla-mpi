@@ -27,6 +27,7 @@ struct PJRT_Client {
     std::vector<PJRT_DeviceDescription*> device_descriptions;
     std::vector<PJRT_Memory*> memories;
     PJRT_TopologyDescription* topology = nullptr;
+    int mpi_rank{};
 };
 
 struct PJRT_Device {
@@ -34,6 +35,7 @@ struct PJRT_Device {
     PJRT_Client* client = nullptr;
     PJRT_DeviceDescription* description = nullptr; 
     PJRT_Memory* default_memory = nullptr;         
+    int mpi_rank{};
 };
 
 struct PJRT_DeviceDescription {

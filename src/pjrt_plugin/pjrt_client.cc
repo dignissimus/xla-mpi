@@ -35,11 +35,13 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
         
         g_default_client = new PJRT_Client();
         g_default_client->client = std::make_unique<xla_mpi::MpiClient>();
+        g_default_client->mpi_rank = rank;
         
         for (int i = 0; i < size; ++i) {
             PJRT_Device* device = new PJRT_Device();
             device->device = new xla_mpi::MpiDevice(i); 
             device->client = g_default_client;
+            device->mpi_rank = i;
 
             PJRT_DeviceDescription* description = new PJRT_DeviceDescription();
             description->device = device;
@@ -51,7 +53,7 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
                 auto* mem = new PJRT_Memory();
                 mem->device = device;
                 mem->client = g_default_client;
-                mem->id = rank;
+                mem->id = i;
                 device->default_memory = mem;
                 g_default_client->memories.push_back(mem);
 
@@ -102,15 +104,15 @@ PJRT_Error* MPI_Client_Destroy(PJRT_Client_Destroy_Args* args) {
 }
 
 PJRT_Error* MPI_Client_Devices(PJRT_Client_Devices_Args* args) {
-    args->devices = g_default_client->devices.data();
-    args->num_devices = g_default_client->devices.size();
-    std::cerr << "sz: " << g_default_client->devices.size()<< std::endl;
+    args->devices = args->client->devices.data();
+    args->num_devices = args->client->devices.size();
+    std::cerr << "sz: " << args->client->devices.size()<< std::endl;
     return nullptr;
 }
 
 PJRT_Error* MPI_Client_AddressableDevices(PJRT_Client_AddressableDevices_Args* args) {
-    args->addressable_devices = g_default_client->addressable_devices.data();
-    args->num_addressable_devices = g_default_client->addressable_devices.size();
+    args->addressable_devices = args->client->addressable_devices.data();
+    args->num_addressable_devices = args->client->addressable_devices.size();
 
     /*
     std::cerr << "sz: " << g_default_client->devices.size()<< std::endl;
@@ -142,16 +144,16 @@ PJRT_Error* MPI_Client_PlatformVersion(PJRT_Client_PlatformVersion_Args* args) {
 
 PJRT_Error* MPI_Client_AddressableMemories(PJRT_Client_AddressableMemories_Args* args) {
     // TODO: Should assert size as 1
-    args->num_addressable_memories = g_default_client->memories.size();
-    args->addressable_memories = g_default_client->memories.data();
+    args->num_addressable_memories = args->client->memories.size();
+    args->addressable_memories = args->client->memories.data();
     return nullptr;
 }
 
 
 PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
     int target_id = args->id;
-    if (target_id >= 0 && target_id < g_default_client->devices.size()) {
-        args->device = g_default_client->devices[target_id];
+    if (target_id >= 0 && target_id < args->client->devices.size()) {
+        args->device = args->client->devices[target_id];
         return nullptr;
     }
 
@@ -162,8 +164,8 @@ PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
 PJRT_Error* MPI_Client_LookupAddressableDevice(PJRT_Client_LookupAddressableDevice_Args* args) {
     int target_id = args->local_hardware_id;
     std::cerr << "Target local hardware id " << target_id << std::endl;
-    if (target_id >= 0 && target_id < g_default_client->devices.size()) {
-        args->addressable_device = g_default_client->devices[target_id];
+    if (target_id >= 0 && target_id < args->client->devices.size()) {
+        args->addressable_device = args->client->devices[target_id];
         return nullptr;
     }
 
