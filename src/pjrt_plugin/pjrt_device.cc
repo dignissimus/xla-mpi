@@ -8,7 +8,7 @@
 
 PJRT_Error* MPI_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args) {
     if (args->device_description) {
-        args->id = args->device_description->mpi_rank
+        args->id = args->device_description->mpi_rank;
     } else {
         args->id = 0;
     }
@@ -65,7 +65,8 @@ PJRT_Error* MPI_Device_GetDescription(PJRT_Device_GetDescription_Args* args) {
 }
 
 PJRT_Error* MPI_Device_IsAddressable(PJRT_Device_IsAddressable_Args* args) {
-    args->is_addressable = true;
+    // TODO: Might want to store is_addressable in device
+    args->is_addressable = args->device->mpi_rank == args->device->client->mpi_rank;
     return nullptr;
 }
 

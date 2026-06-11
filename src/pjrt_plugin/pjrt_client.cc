@@ -38,7 +38,6 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
         g_default_client->mpi_rank = rank;
         
         for (int i = 0; i < size; ++i) {
-        if(i!=rank) continue;
             PJRT_Device* device = new PJRT_Device();
             device->device = new xla_mpi::MpiDevice(i); 
             // device->client = g_default_client;
@@ -57,9 +56,9 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
                 mem->id = i;
                 device->default_memory = mem;
                 g_default_client->memories.push_back(mem);
+               device->client = g_default_client;
 
             if (i == rank) {
-                   device->client = g_default_client;
                                 g_default_client->addressable_devices.push_back(device);
             }
 
