@@ -108,11 +108,6 @@ PJRT_Error* MPI_Client_Devices(PJRT_Client_Devices_Args* args) {
 }
 
 PJRT_Error* MPI_Client_AddressableDevices(PJRT_Client_AddressableDevices_Args* args) {
-    args->addressable_devices = g_default_client->devices.data();
-    args->num_addressable_devices = g_default_client->devices.size();
-    return nullptr;
-
-    // TODO: Need to restore addressable vs non-addressable split
     args->addressable_devices = g_default_client->addressable_devices.data();
     args->num_addressable_devices = g_default_client->addressable_devices.size();
 
