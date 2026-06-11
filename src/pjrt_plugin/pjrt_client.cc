@@ -61,6 +61,7 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
 
             if (i == rank) {
                                 g_default_client->addressable_devices.push_back(device);
+                                g_default_client->memories.push_back(mem);
             }
 
             g_default_client->devices.push_back(device);
