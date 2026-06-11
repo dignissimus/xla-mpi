@@ -50,13 +50,13 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
             device->description = description;
 
                 // TODO: Unsure if non-addressable gets PJRT_Memory
+                // Can I nullptr this?
                 auto* mem = new PJRT_Memory();
                 mem->device = device;
                 mem->client = g_default_client;
                 mem->id = i;
                 // TODO: Need to destroy mem
                 device->default_memory = mem;
-                // g_default_client->memories.push_back(mem);
                device->client = g_default_client;
 
             if (i == rank) {
