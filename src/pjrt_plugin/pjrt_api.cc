@@ -40,6 +40,7 @@ static const PJRT_Api pjrt_api = {
     .PJRT_Client_AddressableMemories = MPI_Client_AddressableMemories,
     .PJRT_Client_Compile = MPI_Client_Compile,
     .PJRT_Client_DefaultDeviceAssignment = MPI_Client_DefaultDeviceAssignment,
+    .PJRT_Client_BufferFromHostBuffer = MPI_Client_BufferFromHostBuffer,
 
     .PJRT_DeviceDescription_Id = MPI_DeviceDescription_Id,
     .PJRT_DeviceDescription_ProcessIndex = MPI_DeviceDescription_ProcessIndex,

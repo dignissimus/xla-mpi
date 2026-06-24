@@ -196,6 +196,10 @@ PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args) {
 
 }
 
+PJRT_Error* MPI_Client_BufferFromHostBuffer(PJRT_Client_BufferFromHostBuffer_Args* args) {
+    return MakeError("PJRT_Client_BufferFromHostBuffer not yet implemented");
+}
+
 
 
 PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {

@@ -13,6 +13,8 @@ PJRT_Error* MPI_Client_ProcessIndex(PJRT_Client_ProcessIndex_Args* args);
 PJRT_Error* MPI_Client_PlatformVersion(PJRT_Client_PlatformVersion_Args* args);
 PJRT_Error* MPI_Client_AddressableMemories(PJRT_Client_AddressableMemories_Args* args);
 PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args);
+PJRT_Error* MPI_Client_BufferFromHostBuffer(PJRT_Client_BufferFromHostBuffer_Args* args);
+
 
 PJRT_Error* MPI_Client_LookupAddressableDevice(PJRT_Client_LookupAddressableDevice_Args* args);
 PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args);
