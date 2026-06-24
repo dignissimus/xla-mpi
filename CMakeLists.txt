@@ -22,6 +22,7 @@ set(PJRT_SOURCES
     src/pjrt_plugin/pjrt_memory.cc
     src/pjrt_plugin/mpi_buffer.cc
     src/pjrt_plugin/mpi_executable.cc
+    src/pjrt_plugin/stablehlo_parser.cc
 )
 
 add_library(pjrt_plugin_mpi SHARED ${PJRT_SOURCES})
