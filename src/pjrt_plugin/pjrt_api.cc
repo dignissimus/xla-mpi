@@ -4,10 +4,16 @@
 #include "pjrt_plugin/pjrt_device.h"
 #include "pjrt_plugin/pjrt_memory.h"
 #include "pjrt_plugin/pjrt_topology.h"
+#include "pjrt_plugin/mpi_buffer.h"
 #include "pjrt_plugin/pjrt_error.h"
+#include "pjrt_plugin/mpi_executable.h"
 
 #include <mpi.h>
 #include <iostream>
+
+// static PJRT_Error* MPI_Error_ForEachPayload(PJRT_Error_ForEachPayload_Args* args) {
+//     return nullptr;
+// }
 
 static const PJRT_Api pjrt_api = {
     .struct_size = PJRT_Api_STRUCT_SIZE,
@@ -62,6 +68,27 @@ static const PJRT_Api pjrt_api = {
     .PJRT_Memory_ToString = MPI_Memory_ToString,
     .PJRT_Memory_AddressableByDevices = MPI_Memory_AddressableByDevices,
 
+    .PJRT_Executable_Destroy = MPI_Executable_Destroy,
+    .PJRT_Executable_Name = MPI_Executable_Name,
+    .PJRT_Executable_NumReplicas = MPI_Executable_NumReplicas,
+    .PJRT_Executable_NumPartitions = MPI_Executable_NumPartitions,
+    .PJRT_Executable_NumOutputs = MPI_Executable_NumOutputs,
+    .PJRT_Executable_SizeOfGeneratedCodeInBytes = MPI_Executable_SizeOfGeneratedCodeInBytes,
+    .PJRT_Executable_GetCostAnalysis = MPI_Executable_GetCostAnalysis,
+    .PJRT_Executable_OutputMemoryKinds = MPI_Executable_OutputMemoryKinds,
+    .PJRT_Executable_OptimizedProgram = MPI_Executable_OptimizedProgram,
+    .PJRT_Executable_Serialize = MPI_Executable_Serialize,
+
+    .PJRT_LoadedExecutable_Destroy = MPI_LoadedExecutable_Destroy,
+    .PJRT_LoadedExecutable_GetExecutable = MPI_LoadedExecutable_GetExecutable,
+    .PJRT_LoadedExecutable_AddressableDevices = MPI_LoadedExecutable_AddressableDevices,
+    .PJRT_LoadedExecutable_Delete = MPI_LoadedExecutable_Delete,
+    .PJRT_LoadedExecutable_IsDeleted = MPI_LoadedExecutable_IsDeleted,
+    .PJRT_LoadedExecutable_Execute = MPI_LoadedExecutable_Execute,
+    .PJRT_Executable_DeserializeAndLoad = MPI_Executable_DeserializeAndLoad,
+    .PJRT_LoadedExecutable_Fingerprint = MPI_LoadedExecutable_Fingerprint,
+
+
     .PJRT_Buffer_Destroy = MPI_Buffer_Destroy,
     .PJRT_Buffer_ElementType = MPI_Buffer_ElementType,
     .PJRT_Buffer_Dimensions = MPI_Buffer_Dimensions,
@@ -100,7 +127,22 @@ static const PJRT_Api pjrt_api = {
 
     .PJRT_Compile = MPI_Compile,
 
+    .PJRT_Executable_OutputElementTypes = MPI_Executable_OutputElementTypes,
+    .PJRT_Executable_OutputDimensions = MPI_Executable_OutputDimensions,
+    .PJRT_Buffer_CopyToMemory = MPI_Buffer_CopyToMemory,
+    .PJRT_Executable_Fingerprint = MPI_Executable_Fingerprint,
+
     .PJRT_Client_TopologyDescription = MPI_Client_TopologyDescription,
+
+    .PJRT_Executable_GetCompiledMemoryStats = MPI_Executable_GetCompiledMemoryStats,
+
+    // .PJRT_LoadedExecutable_GetDeviceAssignment = MPI_LoadedExecutable_GetDeviceAssignment,
+    // .PJRT_Executable_GetCompileOptions = MPI_Executable_GetCompileOptions,
+    // .PJRT_Error_ForEachPayload = MPI_Error_ForEachPayload,
+    // .PJRT_TopologyDescription_Fingerprint = YYY_TopologyDescription_Fingerprint,
+
+
+
 };
 
 extern "C" {

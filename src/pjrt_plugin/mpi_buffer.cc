@@ -1,4 +1,4 @@
-#include "pjrt_plugin/pjrt_types.h"
+#include "pjrt_plugin/mpi_buffer.h"
 
 PJRT_Error* MPI_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args) {
     return MakeError("MPI_Buffer_Destroy not yet implemented");

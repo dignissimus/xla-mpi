@@ -20,7 +20,7 @@ set(PJRT_SOURCES
     src/pjrt_plugin/pjrt_device.cc
     src/pjrt_plugin/pjrt_topology.cc
     src/pjrt_plugin/pjrt_memory.cc
-    src/pjrt_plugin/pjrt_buffer.cc
+    src/pjrt_plugin/mpi_buffer.cc
     src/pjrt_plugin/mpi_executable.cc
 )
 
