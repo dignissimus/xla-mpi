@@ -38,6 +38,7 @@ static const PJRT_Api pjrt_api = {
     .PJRT_Client_LookupDevice = MPI_Client_LookupDevice,
     .PJRT_Client_LookupAddressableDevice = MPI_Client_LookupAddressableDevice,
     .PJRT_Client_AddressableMemories = MPI_Client_AddressableMemories,
+    .PJRT_Client_Compile = MPI_Client_Compile,
     .PJRT_Client_DefaultDeviceAssignment = MPI_Client_DefaultDeviceAssignment,
 
     .PJRT_DeviceDescription_Id = MPI_DeviceDescription_Id,

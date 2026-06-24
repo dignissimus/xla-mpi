@@ -1,5 +1,7 @@
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "pjrt_plugin/pjrt_types.h"
+#include "pjrt_plugin/pjrt_mutex.h"
+#include "pjrt_plugin/mpi_executable.h"
 
 #include <mpi.h>
 #include <iostream>
@@ -151,6 +153,49 @@ PJRT_Error* MPI_Client_AddressableMemories(PJRT_Client_AddressableMemories_Args*
     args->addressable_memories = args->client->memories.data();
     return nullptr;
 }
+
+PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args) {
+    std::scoped_lock lock(GetPjrtGlobalMutex());
+    std::cout << "Compiling StableHLO program" << std::endl;
+
+    PJRT_Client* client = GetClient(args->client);
+    if (!client || !client->client) {
+        // TODO: Why might this be the case
+        // TODO: Think about wording. Is client appropriate here
+        return MakeError("No MPI client");
+    }
+    // TODO: Any additional checks to make sure the client is ok? 
+    // Maybe check devices or memories
+    // TODO: Come back to this after handling failed mpi init
+    
+    // TODO: debug, remove later
+    std::string format_str(args->program->format, args->program->format_size);
+    std::cout << " Program format: " <<  format_str <<
+                  " size " << args->program->format_size << std::endl;
+    std::cout << " Program code size: %zu\n" << args->program->code_size << std::endl;
+
+    xla_mpi::ParsedModule parsed_module;
+
+    if (format_str == "mlir") {
+        std::cout << "mlir" << std::endl;
+        parsed_module = xla_mpi::parseStableHLOBytecode(args->program->code, args->program->code_size);
+    } else if (format_str == "hlo" || format_str == "hlo_with_config") {
+        std::cout << "hlo" << std::endl;
+        std::string program_str(args->program->code, args->program->code_size);
+        parsed_module = xla_mpi::parseStableHLOText(program_str);
+    } else {
+        return MakeError("Unknown program format: " + format_str);
+    }
+
+    if (!parsed_module.ok()) {
+        return MakeError(
+            "Failed to parse StableHLO program. "
+            "The program may be malformed or use an unsupported format.");
+    }
+    return MakeError("PJRT_Client_Compile not yet implemented");
+
+}
+
 
 
 PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {

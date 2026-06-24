@@ -26,7 +26,5 @@ public:
     int world_size() const { return world_size_; }
 };
 
-class MpiBuffer {};
-class MpiExecutable {};
 
 } // namespace xla_mpi
