@@ -18,6 +18,55 @@ bool ParsedModule::ok() {
     return true;
 }
 
+void registerDialects(mlir::MLIRContext& context) {
+    // TODO: Do I want to disable multithreading?
+    context.disableMultithreading();
+    mlir::DialectRegistry registry;
+    registry.insert<mlir::func::FuncDialect>();
+    registry.insert<mlir::stablehlo::StablehloDialect>();
+    registry.insert<mlir::vhlo::VhloDialect>();
+    registry.insert<mlir::chlo::ChloDialect>();
+    context.appendDialectRegistry(registry);
+    context.loadAllAvailableDialects();
+    context.allowUnregisteredDialects();
+}
+
+ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
+                            mlir::OwningOpRef<mlir::ModuleOp> module) {
+    ParsedModule result;
+
+    if (!module) {
+        return result;
+    }
+
+    // TODO: Why inline?
+    // Inline all func.call operations
+    if (!runInlinerPass(*context, *module)) {
+        return result;
+    }
+
+    if (!runOptimizationPasses(*context, *module)) {
+        return result;
+    }
+
+    // TODO: Dump debug info
+
+    mlir::func::FuncOp entry = findEntryFunction(*module);
+    if (!entry) {
+        return result;
+    }
+
+    result.unsupported_ops = checkUnsupportedOps(*module);
+
+    // Transfer ownership
+    result.context = std::move(context);
+    result.module = std::move(module);
+    result.entry_func = entry;
+
+    return result;
+}
+
+
 ParsedModule parseStableHLOBytecode(const char* data, size_t size) {
     return ParsedModule{};
     auto context = std::make_unique<mlir::MLIRContext>();
