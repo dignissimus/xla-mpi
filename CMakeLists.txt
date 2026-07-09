@@ -42,6 +42,7 @@ target_include_directories(pjrt_plugin_mpi PRIVATE
 
 target_link_libraries(pjrt_plugin_mpi PRIVATE
     MPI::MPI_C
+    MPI::MPI_CXX
 
     LLVMSupport
     LLVMCore
