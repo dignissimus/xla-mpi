@@ -215,21 +215,15 @@ PJRT_Error* MPI_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
 
 PJRT_Error* MPI_Client_LookupAddressableDevice(PJRT_Client_LookupAddressableDevice_Args* args) {
     int target_id = args->local_hardware_id;
-    std::cerr << "Target local hardware id " << target_id << std::endl;
     if (target_id >= 0 && target_id < args->client->devices.size()) {
+        // TODO: I should check if the device is actually addressable
+        // Then return MakeError if not
         args->addressable_device = args->client->devices[target_id];
         return nullptr;
     }
 
     // TODO: More informative
     return MakeError("Device with specified ID not found");
-
-    /*int local_id = args->local_hardware_id;
-    if (local_id >= 0 && local_id < g_default_client->addressable_devices.size()) {
-        args->addressable_device = g_default_client->addressable_devices[local_id];
-        return nullptr;
-    }
-    return MakeError("MPI Client: Local hardware ID not found.");*/
 }
 
 
