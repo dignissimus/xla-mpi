@@ -10,6 +10,7 @@ find_package(MLIR REQUIRED CONFIG)
 find_package(Stablehlo REQUIRED CONFIG)
 find_package(MPI REQUIRED)
 message(STATUS "Found MPI CXX compiler: ${MPI_CXX_COMPILER}")
+add_definitions(${LLVM_DEFINITIONS})
 
 set(XLA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 
@@ -31,6 +32,10 @@ add_library(pjrt_plugin_mpi SHARED ${PJRT_SOURCES})
 target_include_directories(pjrt_plugin_mpi PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${XLA_INCLUDE_DIR}
+
+    ${LLVM_INCLUDE_DIRS}
+    ${MLIR_INCLUDE_DIRS}
+    ${Stablehlo_INCLUDE_DIRS}
 )
 
 target_link_libraries(pjrt_plugin_mpi PRIVATE
