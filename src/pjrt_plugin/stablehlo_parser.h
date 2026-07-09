@@ -1,3 +1,6 @@
+#include <cstddef>
+#include <string>
+
 namespace xla_mpi {
     struct ParsedModule{
         bool ok();
