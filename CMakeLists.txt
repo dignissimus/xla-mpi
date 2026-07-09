@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(LLVM REQUIRED CONFIG)
 find_package(MLIR REQUIRED CONFIG)
 include_directories(${Stablehlo_DIR})
+include_directories(${Stablehlo_DIR}/build)
 include_directories(${Stablehlo_DIR}/build/tools/stablehlo/include)
 link_directories(${Stablehlo_DIR}/build/lib)
 find_package(MPI REQUIRED)
@@ -38,17 +39,37 @@ target_include_directories(pjrt_plugin_mpi PRIVATE
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
     ${Stablehlo_INCLUDE_DIRS}
+    # Do I need the below
+    ${Stablehlo_DIR}
+    ${Stablehlo_DIR}/build
 )
 
 target_link_libraries(pjrt_plugin_mpi PRIVATE
     MPI::MPI_C
     MPI::MPI_CXX
 
+    -Wl,--start-group
     LLVMSupport
     LLVMCore
     MLIRIR
     MLIRParser
     StablehloSerialization
+
+    MLIRFuncDialect
+    MLIRIR
+    MLIRSupport
+
+    MLIRTensorDialect
+    MLIRShapeDialect
+    MLIRQuantDialect
+
+    VhloTypes
+    StablehloOps
+    VhloOps
+    StablehloBase
+    MLIRComplexDialect
+    ChloOps
+    -Wl,--end-group
 )
 
 set_target_properties(pjrt_plugin_mpi PROPERTIES
