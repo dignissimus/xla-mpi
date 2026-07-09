@@ -15,9 +15,14 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 echo "Configuring project with CMake..."
+STABLEHLO_FLAG=""
+if [ -n "$STABLEHLO_DIR" ]; then
+    STABLEHLO_FLAG="-DStablehlo_DIR=$STABLEHLO_DIR"
+fi
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    $STABLEHLO_FLAG
 
 echo "Compiling shared library..."
 if [[ "$OSTYPE" == "darwin"* ]]; then
