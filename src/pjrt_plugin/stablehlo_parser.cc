@@ -17,6 +17,11 @@
 #include "stablehlo/dialect/VhloOps.h"
 #include "stablehlo/dialect/ChloOps.h"
 
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+
 namespace xla_mpi {
 
 bool ParsedModule::ok() {

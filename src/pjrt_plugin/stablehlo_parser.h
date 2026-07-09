@@ -1,5 +1,13 @@
 #include <cstddef>
 #include <string>
+#include <memory>
+#include <vector>
+
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+
 
 namespace xla_mpi {
     struct ParsedModule{
