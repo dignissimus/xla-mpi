@@ -27,7 +27,7 @@ if [ -n "$LLVM_DIR" ]; then
 fi
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     $CUSTOM_PATHS
 
 echo "Compiling shared library..."
