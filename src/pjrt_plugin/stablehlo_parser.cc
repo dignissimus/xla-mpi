@@ -42,12 +42,12 @@ void registerDialects(mlir::MLIRContext& context) {
 }
 
 // TODO: Implement stubs
-bool runInlinerPass(mlir::MLIRContext& ctx, mlir::ModuleOp& mod) { return true; }
-    bool runOptimizationPasses(mlir::MLIRContext& ctx, mlir::ModuleOp& mod) { return true; }
-    mlir::func::FuncOp findEntryFunction(mlir::ModuleOp& mod) { 
+bool runInlinerPass(mlir::MLIRContext& ctx, mlir::ModuleOp mod) { return true; }
+    bool runOptimizationPasses(mlir::MLIRContext& ctx, mlir::ModuleOp mod) { return true; }
+    mlir::func::FuncOp findEntryFunction(mlir::ModuleOp mod) { 
         return nullptr; 
     }
-    std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp& mod) { return {}; }
+    std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp mod) { return {}; }
 
 ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
                             mlir::OwningOpRef<mlir::ModuleOp> module) {
