@@ -53,10 +53,7 @@ PJRT_Error* MPI_Client_Create(PJRT_Client_Create_Args* args) {
 
                 // TODO: Unsure if non-addressable gets PJRT_Memory
                 // Can I nullptr this?
-                auto* mem = new PJRT_Memory();
-                mem->device = device;
-                mem->client = g_default_client;
-                mem->id = i;
+                PJRT_Memory* mem = MakeMemory(device, g_default_client, i);
                 // TODO: Need to destroy mem
                 device->default_memory = mem;
                device->client = g_default_client;
@@ -91,7 +88,7 @@ PJRT_Error* MPI_Client_Destroy(PJRT_Client_Destroy_Args* args) {
         }
 
         for (auto* mem : g_default_client->memories) {
-            delete mem;
+            delete static_cast<PJRT_Memory_Impl*>(mem);
         }
 
         delete g_default_client;
@@ -151,6 +148,10 @@ PJRT_Error* MPI_Client_AddressableMemories(PJRT_Client_AddressableMemories_Args*
     // TODO: Should assert size as 1
     args->num_addressable_memories = args->client->memories.size();
     args->addressable_memories = args->client->memories.data();
+    return nullptr;
+}
+
+PJRT_Error* MPI_Client_UpdateGlobalProcessInfo(PJRT_Client_UpdateGlobalProcessInfo_Args* args) {
     return nullptr;
 }
 

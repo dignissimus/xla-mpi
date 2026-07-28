@@ -136,9 +136,12 @@ static const PJRT_Api pjrt_api = {
 
     .PJRT_Executable_GetCompiledMemoryStats = MPI_Executable_GetCompiledMemoryStats,
 
+    .PJRT_Client_UpdateGlobalProcessInfo = MPI_Client_UpdateGlobalProcessInfo,
+
     // .PJRT_LoadedExecutable_GetDeviceAssignment = MPI_LoadedExecutable_GetDeviceAssignment,
     // .PJRT_Executable_GetCompileOptions = MPI_Executable_GetCompileOptions,
-    // .PJRT_Error_ForEachPayload = MPI_Error_ForEachPayload,
+
+    .PJRT_Error_ForEachPayload = MPI_Error_ForEachPayload,
     // .PJRT_TopologyDescription_Fingerprint = YYY_TopologyDescription_Fingerprint,
 
 

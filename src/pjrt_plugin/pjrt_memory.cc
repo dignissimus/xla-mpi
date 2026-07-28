@@ -9,7 +9,7 @@
 
 PJRT_Error* MPI_Memory_Id(PJRT_Memory_Id_Args* args) {
     // TODO: Defaulting to 0?
-    args->id = args->memory ? args->memory->id : 0;
+    args->id = args->memory ? static_cast<PJRT_Memory_Impl*>(args->memory)->id : 0;
     return nullptr;
 }
 
@@ -35,9 +35,10 @@ PJRT_Error* MPI_Memory_ToString(PJRT_Memory_ToString_Args* args) {
 }
 
 PJRT_Error* MPI_Memory_AddressableByDevices(PJRT_Memory_AddressableByDevices_Args* args) {
-    if (args->memory && args->memory->device) {
+    auto* mem = args->memory ? static_cast<PJRT_Memory_Impl*>(args->memory) : nullptr;
+    if (mem && mem->device) {
         static PJRT_Device* dev_array[1];
-        dev_array[0] = args->memory->device;
+        dev_array[0] = mem->device;
         args->devices = dev_array;
         args->num_devices = 1;
     } else {

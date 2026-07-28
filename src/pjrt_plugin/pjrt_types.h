@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace xla_mpi {
@@ -18,7 +19,49 @@ class MpiExecutable;
 struct PJRT_TopologyDescription;
 struct PJRT_DeviceDescription;
 struct PJRT_Device;
-struct PJRT_Memory;
+struct PJRT_Client;
+
+// ---- PJRT_Error --------------------------------------------------------
+
+struct PJRT_Error_Impl : public PJRT_Error {
+    std::string message;
+    PJRT_Error_Code code = PJRT_Error_Code_INTERNAL;
+
+    static void Destroy(PJRT_Error* error);
+    static void Message(const PJRT_Error* error, const char** message,
+                         size_t* message_size);
+    static PJRT_Error_Code GetCode(const PJRT_Error* error);
+    static void ForEachPayload(const PJRT_Error* error,
+                                PJRT_Error_PayloadVisitor visitor,
+                                void* user_arg);
+};
+
+extern const PJRT_Error_FunctionTable kMpiErrorVtable;
+
+// ---- PJRT_Memory --------------------------------------------------------
+
+struct PJRT_Memory_Impl : public PJRT_Memory {
+    PJRT_Device* device = nullptr;
+    PJRT_Client* client = nullptr;
+    int id = 0;
+
+    ~PJRT_Memory_Impl();
+
+    static void* GetUserData(PJRT_Memory* memory, const void* key);
+    static void SetUserData(PJRT_Memory* memory, const void* key, void* data,
+                             void (*dtor)(void*));
+
+  private:
+    struct UserDataEntry {
+        void* data;
+        void (*dtor)(void*);
+    };
+    std::unordered_map<const void*, UserDataEntry> user_data_;
+};
+
+extern const PJRT_Memory_FunctionTable kMpiMemoryVtable;
+
+PJRT_Memory* MakeMemory(PJRT_Device* device, PJRT_Client* client, int id);
 
 struct PJRT_Client {
     std::unique_ptr<xla_mpi::MpiClient> client;
@@ -33,21 +76,15 @@ struct PJRT_Client {
 struct PJRT_Device {
     xla_mpi::MpiDevice* device = nullptr;
     PJRT_Client* client = nullptr;
-    PJRT_DeviceDescription* description = nullptr; 
-    PJRT_Memory* default_memory = nullptr;         
+    PJRT_DeviceDescription* description = nullptr;
+    PJRT_Memory* default_memory = nullptr;
     int mpi_rank{};
 };
 
 struct PJRT_DeviceDescription {
-    PJRT_Device* device = nullptr; 
+    PJRT_Device* device = nullptr;
     int mpi_rank{};
     std::string debug_string;
-};
-
-struct PJRT_Memory {
-    PJRT_Device* device = nullptr;
-    PJRT_Client* client = nullptr;
-    int id = 0;
 };
 
 struct PJRT_TopologyDescription {
@@ -73,11 +110,6 @@ struct PJRT_LoadedExecutable {
 
 struct PJRT_Event {
     bool ready = true;
-};
-
-struct PJRT_Error {
-    std::string message;
-    PJRT_Error_Code code;
 };
 
 PJRT_Error* MakeError(const std::string& msg, PJRT_Error_Code code = PJRT_Error_Code_INTERNAL);
