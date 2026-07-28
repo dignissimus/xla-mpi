@@ -8,9 +8,9 @@ Needs LLVM/MLIR and StableHLO and needs the following environment variable set: 
 `scripts/setup_deps.sh` clones and builds these then prints the env vars for you.
 
 ```bash
-./scripts/initialise_third_party.sh   # Run this once to get the PJRT header
+./scripts/initialise_third_party.sh
 ./scripts/setup_deps.sh
-. "$HOME/.local/xla-mpi-deps/env.sh"  # or wherever --env-file pointed
+. "$HOME/.local/xla-mpi-deps/env.sh"
 ./build.sh
 ```
 
