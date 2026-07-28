@@ -53,7 +53,23 @@ target_link_libraries(pjrt_plugin_mpi PRIVATE
     LLVMCore
     MLIRIR
     MLIRParser
+    MLIRPass
+    MLIRBytecodeWriter
+    MLIRTransforms
+    MLIRTransformUtils
+    MLIRRewrite
+    MLIRReconcileUnrealizedCasts
+    MLIRFuncTransforms
     StablehloSerialization
+    StablehloPasses
+    StablehloTypeInference
+    StablehloBroadcastUtils
+    StablehloAssemblyFormat
+    StablehloBroadcastLowering
+    StablehloPassUtils
+    StablehloReplicaGroupUtils
+    StablehloOptimizationPasses
+    Version
 
     MLIRFuncDialect
     MLIRIR
