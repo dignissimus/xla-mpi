@@ -122,7 +122,7 @@ static const PJRT_Api pjrt_api = {
     .PJRT_TopologyDescription_PlatformName = MPI_TopologyDescription_PlatformName,
     .PJRT_TopologyDescription_PlatformVersion = MPI_TopologyDescription_PlatformVersion,
     .PJRT_TopologyDescription_GetDeviceDescriptions = MPI_TopologyDescription_GetDeviceDescriptions,
-    .PJRT_TopologyDescription_Serialize = nullptr,
+    .PJRT_TopologyDescription_Serialize = MPI_TopologyDescription_Serialize,
     .PJRT_TopologyDescription_Attributes = MPI_TopologyDescription_Attributes,
 
     .PJRT_Compile = MPI_Compile,
