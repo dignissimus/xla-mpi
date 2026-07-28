@@ -25,7 +25,7 @@
 namespace xla_mpi {
 
 bool ParsedModule::ok() {
-    return true;
+    return module && entry_func;
 }
 
 void registerDialects(mlir::MLIRContext& context) {
@@ -44,10 +44,29 @@ void registerDialects(mlir::MLIRContext& context) {
 // TODO: Implement stubs
 bool runInlinerPass(mlir::MLIRContext& ctx, mlir::ModuleOp mod) { return true; }
     bool runOptimizationPasses(mlir::MLIRContext& ctx, mlir::ModuleOp mod) { return true; }
-    mlir::func::FuncOp findEntryFunction(mlir::ModuleOp mod) { 
-        return nullptr; 
+    mlir::func::FuncOp findEntryFunction(mlir::ModuleOp mod) {
+        mlir::func::FuncOp entry = nullptr;
+        for (auto funcOp : mod.getOps<mlir::func::FuncOp>()) {
+            if (funcOp.getName() == "main") {
+                return funcOp;
+            }
+            if (!entry) {
+                entry = funcOp;
+            }
+        }
+        return entry;
     }
-    std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp mod) { return {}; }
+    std::vector<std::string> checkUnsupportedOps(mlir::ModuleOp mod) {
+        std::vector<std::string> unsupported;
+        mod.walk([&](mlir::Operation* op) {
+            llvm::StringRef dialect = op->getName().getDialectNamespace();
+            if (dialect != "builtin" && dialect != "func" &&
+                dialect != "stablehlo" && dialect != "chlo") {
+                unsupported.push_back(op->getName().getStringRef().str());
+            }
+        });
+        return unsupported;
+    }
 
 ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
                             mlir::OwningOpRef<mlir::ModuleOp> module) {
@@ -86,7 +105,6 @@ ParsedModule finalizeModule(std::unique_ptr<mlir::MLIRContext> context,
 
 
 ParsedModule parseStableHLOBytecode(const char* data, size_t size) {
-    return ParsedModule{};
     auto context = std::make_unique<mlir::MLIRContext>();
     registerDialects(*context);
 
@@ -111,7 +129,13 @@ ParsedModule parseStableHLOBytecode(const char* data, size_t size) {
 
 
 ParsedModule parseStableHLOText(const std::string& text) {
-    return ParsedModule{};
+    auto context = std::make_unique<mlir::MLIRContext>();
+    registerDialects(*context);
+
+    mlir::OwningOpRef<mlir::ModuleOp> moduleOp =
+        mlir::parseSourceString<mlir::ModuleOp>(text, context.get());
+
+    return finalizeModule(std::move(context), std::move(moduleOp));
 }
 
 } // namespace xla_mpi
