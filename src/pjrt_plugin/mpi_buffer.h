@@ -13,7 +13,7 @@ public:
     MpiBuffer(PJRT_Buffer_Type dtype, std::vector<int64_t> shape);
     ~MpiBuffer() = default;
 
-    static std::shared_ptr<MpiBuffer> CreateFromHost(void* data, PJRT_Buffer_Type dtype, const std::vector<int64_t>& shape);
+    static std::unique_ptr<MpiBuffer> CreateFromHost(const void* data, PJRT_Buffer_Type dtype, const std::vector<int64_t>& shape);
 
     void* data() { return data_.data(); }
     const void* data() const { return data_.data(); }

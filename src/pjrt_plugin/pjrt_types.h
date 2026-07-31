@@ -94,6 +94,9 @@ struct PJRT_TopologyDescription {
 struct PJRT_Buffer {
     std::unique_ptr<xla_mpi::MpiBuffer> buffer;
     PJRT_Client* client = nullptr;
+    PJRT_Device* device = nullptr;
+    PJRT_Memory* memory = nullptr;
+    bool deleted = false;
 };
 
 struct PJRT_Executable {
