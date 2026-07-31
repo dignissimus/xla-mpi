@@ -99,3 +99,30 @@ PJRT_Memory* MakeMemory(PJRT_Device* device, PJRT_Client* client, int id) {
 PJRT_Client* GetClient(PJRT_Client* client) {
     return client ? client : GetOrCreateDefaultClient();
 }
+
+// ============================================================================
+// PJRT_Event
+// ============================================================================
+
+PJRT_Error* MPI_Event_Destroy(PJRT_Event_Destroy_Args* args) {
+    delete args->event;
+    return nullptr;
+}
+
+PJRT_Error* MPI_Event_IsReady(PJRT_Event_IsReady_Args* args) {
+    args->is_ready = args->event ? args->event->ready : true;
+    return nullptr;
+}
+
+PJRT_Error* MPI_Event_Error(PJRT_Event_Error_Args* args) {
+    return nullptr;
+}
+
+PJRT_Error* MPI_Event_Await(PJRT_Event_Await_Args* args) {
+    return nullptr;
+}
+
+PJRT_Error* MPI_Event_OnReady(PJRT_Event_OnReady_Args* args) {
+    args->callback(nullptr, args->user_arg);
+    return nullptr;
+}

@@ -112,6 +112,12 @@ struct PJRT_Event {
     bool ready = true;
 };
 
+PJRT_Error* MPI_Event_Destroy(PJRT_Event_Destroy_Args* args);
+PJRT_Error* MPI_Event_IsReady(PJRT_Event_IsReady_Args* args);
+PJRT_Error* MPI_Event_Error(PJRT_Event_Error_Args* args);
+PJRT_Error* MPI_Event_Await(PJRT_Event_Await_Args* args);
+PJRT_Error* MPI_Event_OnReady(PJRT_Event_OnReady_Args* args);
+
 PJRT_Error* MakeError(const std::string& msg, PJRT_Error_Code code = PJRT_Error_Code_INTERNAL);
 
 PJRT_Client* GetOrCreateDefaultClient();

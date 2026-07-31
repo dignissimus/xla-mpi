@@ -33,7 +33,14 @@ static const PJRT_Api pjrt_api = {
 
     .PJRT_Plugin_Initialize = MPI_Plugin_Initialize,
     .PJRT_Plugin_Attributes = MPI_Plugin_Attributes,
-    
+
+    .PJRT_Event_Destroy = MPI_Event_Destroy,
+    .PJRT_Event_IsReady = MPI_Event_IsReady,
+    .PJRT_Event_Error = MPI_Event_Error,
+    .PJRT_Event_Await = MPI_Event_Await,
+    .PJRT_Event_OnReady = MPI_Event_OnReady,
+
+
     .PJRT_Client_Create = MPI_Client_Create,
     .PJRT_Client_Destroy = MPI_Client_Destroy,
     .PJRT_Client_PlatformName = MPI_Client_PlatformName,
