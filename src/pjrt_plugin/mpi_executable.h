@@ -30,7 +30,13 @@ public:
     bool IsValid() const;
     std::string error() const;
     size_t num_outputs() const;
-    const std::vector<OutputInfo>& output_info() const { return output_info_; }
+
+    const std::vector<PJRT_Buffer_Type>& output_types() const { return output_types_; }
+    const std::vector<int64_t>& output_dims() const { return output_dims_; }
+    const std::vector<size_t>& output_dim_sizes() const { return output_dim_sizes_; }
+    const std::vector<const char*>& output_memory_kinds() const { return output_memory_kinds_; }
+    const std::vector<size_t>& output_memory_kind_sizes() const { return output_memory_kind_sizes_; }
+    const std::string& fingerprint() const { return fingerprint_; }
 
     MpiExecuteResult Execute(const std::vector<MpiBuffer*>& inputs);
 
@@ -46,6 +52,12 @@ private:
     std::string error_;
     std::vector<ArgInfo> input_info_;
     std::vector<OutputInfo> output_info_;
+    std::vector<PJRT_Buffer_Type> output_types_;
+    std::vector<int64_t> output_dims_;
+    std::vector<size_t> output_dim_sizes_;
+    std::vector<const char*> output_memory_kinds_;
+    std::vector<size_t> output_memory_kind_sizes_;
+    std::string fingerprint_;
     std::unique_ptr<xla::LocalExecutable> executable_;
     // Not owned: xla::ClientLibrary owns a process-wide singleton per
     // platform. Needed again at execution time

@@ -1,8 +1,8 @@
 #include "pjrt_plugin/mpi_executable.h"
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,6 +35,8 @@ namespace xla_mpi {
 namespace {
 
 namespace se = ::stream_executor;
+
+constexpr char kDeviceMemoryKind[] = "device";
 
 PJRT_Buffer_Type MlirElementTypeToPjrtType(mlir::Type type) {
     return pjrt::ConvertToPjRtBufferType(xla::ConvertMlirTypeToPrimitiveType(type));
@@ -156,6 +158,16 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
 
     exe->executable_ = std::move((*executables)[0]);
     exe->client_ = *client_or;
+
+    for (const OutputInfo& info : exe->output_info_) {
+        exe->output_types_.push_back(static_cast<PJRT_Buffer_Type>(info.dtype));
+        exe->output_dim_sizes_.push_back(info.shape.size());
+        exe->output_dims_.insert(exe->output_dims_.end(), info.shape.begin(), info.shape.end());
+    }
+    exe->output_memory_kinds_.assign(exe->output_info_.size(), kDeviceMemoryKind);
+    exe->output_memory_kind_sizes_.assign(exe->output_info_.size(), std::strlen(kDeviceMemoryKind));
+    exe->fingerprint_ = std::to_string(reinterpret_cast<uintptr_t>(exe->executable_.get()));
+
     exe->valid_ = true;
     return exe;
 }
@@ -269,15 +281,10 @@ PJRT_Error* MPI_Executable_GetCostAnalysis(PJRT_Executable_GetCostAnalysis_Args*
 }
 
 PJRT_Error* MPI_Executable_OutputMemoryKinds(PJRT_Executable_OutputMemoryKinds_Args* args) {
-    static const char* kDevice = "device";
-    static thread_local std::vector<const char*> kinds;
-    static thread_local std::vector<size_t> kind_sizes;
-    size_t n = args->executable->executable->num_outputs();
-    kinds.assign(n, kDevice);
-    kind_sizes.assign(n, 6);
-    args->num_outputs = n;
-    args->memory_kinds = kinds.data();
-    args->memory_kind_sizes = kind_sizes.data();
+    const xla_mpi::MpiExecutable& exe = *args->executable->executable;
+    args->num_outputs = exe.output_memory_kinds().size();
+    args->memory_kinds = exe.output_memory_kinds().data();
+    args->memory_kind_sizes = exe.output_memory_kind_sizes().data();
     return nullptr;
 }
 
@@ -374,39 +381,24 @@ PJRT_Error* MPI_Executable_DeserializeAndLoad(PJRT_Executable_DeserializeAndLoad
 }
 
 PJRT_Error* MPI_LoadedExecutable_Fingerprint(PJRT_LoadedExecutable_Fingerprint_Args* args) {
-    // Identity of the underlying MpiExecutable is a stable-enough fingerprint
-    // for this phase (no persistent compilation cache yet).
-    static thread_local std::string fp;
-    fp = std::to_string(reinterpret_cast<uintptr_t>(
-        args->executable->executable->executable.get()));
+    const std::string& fp = args->executable->executable->executable->fingerprint();
     args->executable_fingerprint = fp.c_str();
     args->executable_fingerprint_size = fp.size();
     return nullptr;
 }
 
 PJRT_Error* MPI_Executable_OutputElementTypes(PJRT_Executable_OutputElementTypes_Args* args) {
-    static thread_local std::vector<PJRT_Buffer_Type> types;
-    types.clear();
-    for (const xla_mpi::OutputInfo& info : args->executable->executable->output_info()) {
-        types.push_back(static_cast<PJRT_Buffer_Type>(info.dtype));
-    }
-    args->output_types = types.data();
-    args->num_output_types = types.size();
+    const xla_mpi::MpiExecutable& exe = *args->executable->executable;
+    args->output_types = const_cast<PJRT_Buffer_Type*>(exe.output_types().data());
+    args->num_output_types = exe.output_types().size();
     return nullptr;
 }
 
 PJRT_Error* MPI_Executable_OutputDimensions(PJRT_Executable_OutputDimensions_Args* args) {
-    static thread_local std::vector<int64_t> dims;
-    static thread_local std::vector<size_t> dim_sizes;
-    dims.clear();
-    dim_sizes.clear();
-    for (const xla_mpi::OutputInfo& info : args->executable->executable->output_info()) {
-        dim_sizes.push_back(info.shape.size());
-        dims.insert(dims.end(), info.shape.begin(), info.shape.end());
-    }
-    args->num_outputs = dim_sizes.size();
-    args->dims = dims.data();
-    args->dim_sizes = dim_sizes.data();
+    const xla_mpi::MpiExecutable& exe = *args->executable->executable;
+    args->num_outputs = exe.output_dim_sizes().size();
+    args->dims = exe.output_dims().data();
+    args->dim_sizes = exe.output_dim_sizes().data();
     return nullptr;
 }
 
@@ -415,8 +407,7 @@ PJRT_Error* MPI_Executable_GetCompiledMemoryStats(PJRT_Executable_GetCompiledMem
 }
 
 PJRT_Error* MPI_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args) {
-    static thread_local std::string fp;
-    fp = std::to_string(reinterpret_cast<uintptr_t>(args->executable->executable.get()));
+    const std::string& fp = args->executable->executable->fingerprint();
     args->executable_fingerprint = fp.c_str();
     args->executable_fingerprint_size = fp.size();
     return nullptr;
