@@ -1,5 +1,16 @@
 #include "pjrt_plugin/mpi_executable.h"
 
+namespace xla_mpi {
+
+std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, const char* code,
+                                                     size_t code_size) {
+    std::shared_ptr<MpiExecutable> exe(new MpiExecutable());
+    exe->error_ = "MpiExecutable::Create not yet implemented";
+    return exe;
+}
+
+}  // namespace xla_mpi
+
 PJRT_Error* MPI_Executable_Destroy(PJRT_Executable_Destroy_Args* args) {
     return MakeError("MPI_Executable_Destroy not yet implemented");
 }

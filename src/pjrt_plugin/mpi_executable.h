@@ -1,11 +1,11 @@
 #ifndef XLA_MPI_MPI_EXECUTABLE_H_
 #define XLA_MPI_MPI_EXECUTABLE_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "pjrt_plugin/stablehlo_parser.h"
 #include "pjrt_plugin/mpi_buffer.h"
 
 namespace xla_mpi {
@@ -22,22 +22,21 @@ struct MpiExecuteResult {
 
 class MpiExecutable {
 public:
-    static std::unique_ptr<MpiExecutable> Create(ParsedModule parsed_module);
-    ~MpiExecutable();
+    static std::shared_ptr<MpiExecutable> Create(const std::string& format, const char* code, size_t code_size);
+    ~MpiExecutable() = default;
 
-    bool IsValid() const;
-    std::string error() const;
-    size_t num_outputs() const;
+    bool IsValid() const { return valid_; }
+    std::string error() const { return error_; }
+    size_t num_outputs() const { return output_info_.size(); }
+    const std::vector<OutputInfo>& output_info() const { return output_info_; }
 
     MpiExecuteResult Execute(const std::vector<MpiBuffer*>& inputs);
 
 private:
     MpiExecutable() = default;
 
-    ParsedModule parsed_module_;
     bool valid_ = false;
     std::string error_;
-    size_t num_outputs_ = 0;
     std::vector<OutputInfo> output_info_;
 };
 

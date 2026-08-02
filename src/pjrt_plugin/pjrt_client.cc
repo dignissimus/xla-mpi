@@ -177,26 +177,24 @@ PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args) {
                   " size " << args->program->format_size << std::endl;
     std::cout << " Program code size: %zu\n" << args->program->code_size << std::endl;
 
-    xla_mpi::ParsedModule parsed_module;
-
-    if (format_str == "mlir") {
-        std::cout << "mlir" << std::endl;
-        parsed_module = xla_mpi::parseStableHLOBytecode(args->program->code, args->program->code_size);
-    } else if (format_str == "hlo" || format_str == "hlo_with_config") {
-        std::cout << "hlo" << std::endl;
-        std::string program_str(args->program->code, args->program->code_size);
-        parsed_module = xla_mpi::parseStableHLOText(program_str);
-    } else {
-        return MakeError("Unknown program format: " + format_str);
+    std::shared_ptr<xla_mpi::MpiExecutable> mpi_executable =
+        xla_mpi::MpiExecutable::Create(format_str, args->program->code, args->program->code_size);
+    if (!mpi_executable->IsValid()) {
+        return MakeError("Failed to compile StableHLO program: " + mpi_executable->error());
     }
 
-    if (!parsed_module.ok()) {
-        return MakeError(
-            "Failed to parse StableHLO program. "
-            "The program may be malformed or use an unsupported format.");
-    }
-    return MakeError("PJRT_Client_Compile not yet implemented");
+    PJRT_Executable* executable = new PJRT_Executable();
+    executable->executable = std::move(mpi_executable);
+    executable->client = client;
+    executable->owned_by_loaded = true;
 
+    PJRT_LoadedExecutable* loaded = new PJRT_LoadedExecutable();
+    loaded->executable = executable;
+    loaded->client = client;
+    loaded->addressable_devices = client->addressable_devices;
+
+    args->executable = loaded;
+    return nullptr;
 }
 
 PJRT_Error* MPI_Client_BufferFromHostBuffer(PJRT_Client_BufferFromHostBuffer_Args* args) {

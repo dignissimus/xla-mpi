@@ -1,6 +1,6 @@
 #pragma once
 
-#include <xla/pjrt/c/pjrt_c_api.h>
+#include "xla/pjrt/c/pjrt_c_api.h"
 #include "pjrt_plugin/mpi_client.h"
 
 #include <memory>
@@ -100,7 +100,7 @@ struct PJRT_Buffer {
 };
 
 struct PJRT_Executable {
-    std::unique_ptr<xla_mpi::MpiExecutable> executable;
+    std::shared_ptr<xla_mpi::MpiExecutable> executable;
     PJRT_Client* client = nullptr;
     bool owned_by_loaded = false;
 };
