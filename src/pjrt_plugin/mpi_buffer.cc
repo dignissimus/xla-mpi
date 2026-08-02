@@ -3,34 +3,12 @@
 
 #include <cstring>
 #include <numeric>
-#include <stdexcept>
 #include <string>
 
-namespace xla_mpi {
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/primitive_util.h"
 
-namespace {
-size_t ElementByteSize(PJRT_Buffer_Type dtype) {
-    switch (dtype) {
-        case PJRT_Buffer_Type_PRED:
-        case PJRT_Buffer_Type_S8:
-        case PJRT_Buffer_Type_U8:
-            return 1;
-        case PJRT_Buffer_Type_S16:
-        case PJRT_Buffer_Type_U16:
-            return 2;
-        case PJRT_Buffer_Type_S32:
-        case PJRT_Buffer_Type_U32:
-        case PJRT_Buffer_Type_F32:
-            return 4;
-        case PJRT_Buffer_Type_S64:
-        case PJRT_Buffer_Type_U64:
-        case PJRT_Buffer_Type_F64:
-            return 8;
-        default:
-            throw std::runtime_error("Unsupported PJRT_Buffer_Type: " + std::to_string(dtype));
-    }
-}
-}  // namespace
+namespace xla_mpi {
 
 MpiBuffer::MpiBuffer(PJRT_Buffer_Type dtype, std::vector<int64_t> shape)
     : dtype_(dtype), shape_(std::move(shape)), data_(byte_size()) {}
@@ -50,7 +28,7 @@ size_t MpiBuffer::num_elements() const {
 }
 
 size_t MpiBuffer::element_size() const {
-    return ElementByteSize(dtype_);
+    return xla::primitive_util::ByteWidth(pjrt::ConvertFromPjRtBufferType(dtype_));
 }
 
 size_t MpiBuffer::byte_size() const {

@@ -27,7 +27,9 @@ cc_binary(
     linkstatic = 1,
     deps = [
         "@mpi",
+        "@xla//xla:shape_util",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/service:computation_placer",
     ],
 )
