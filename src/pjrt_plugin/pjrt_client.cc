@@ -2,6 +2,7 @@
 #include "pjrt_plugin/pjrt_types.h"
 #include "pjrt_plugin/pjrt_mutex.h"
 #include "pjrt_plugin/mpi_executable.h"
+#include "pjrt_plugin/mpi_collectives.h"
 
 #include <mpi.h>
 #include <exception>
@@ -10,11 +11,7 @@
 #include <string>
 
 PJRT_Error* MPI_Plugin_Initialize(PJRT_Plugin_Initialize_Args* args) {
-    int initialized;
-    MPI_Initialized(&initialized);
-    if (!initialized) {
-        MPI_Init(nullptr, nullptr);
-    }
+    xla_mpi::GetMpiSingleton().Init();
     std::cout << "MPI_Plugin_Initialize" << std::endl;
     return nullptr;
 }
@@ -97,12 +94,7 @@ PJRT_Error* MPI_Client_Destroy(PJRT_Client_Destroy_Args* args) {
         g_default_client = nullptr;
     }
 
-    // TODO: Check MPI_Finalized error code and return accordingly
-    int finalized;
-    MPI_Finalized(&finalized);
-    if (!finalized) {
-        MPI_Finalize();
-    }
+    xla_mpi::GetMpiSingleton().Finalize();
 
     return nullptr;
 }

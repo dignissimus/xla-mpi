@@ -7,6 +7,7 @@
 #include "pjrt_plugin/mpi_buffer.h"
 #include "pjrt_plugin/pjrt_error.h"
 #include "pjrt_plugin/mpi_executable.h"
+#include "pjrt_plugin/mpi_collectives.h"
 
 #include <mpi.h>
 #include <iostream>
@@ -157,11 +158,7 @@ static const PJRT_Api pjrt_api = {
 extern "C" {
 
 const PJRT_Api* GetPjrtApi() {
-    int initialized;
-    MPI_Initialized(&initialized);
-    if (!initialized) {
-        MPI_Init(nullptr, nullptr);
-    }
+    xla_mpi::GetMpiSingleton().Init();
 
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
