@@ -44,6 +44,8 @@ cc_binary(
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/pjrt:mlir_to_hlo",
+        "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/pjrt/proto:compile_options_proto_cc",
         "@xla//xla/service:collective_ops_utils",
         "@xla//xla/service:computation_placer",
         "@xla//xla/service:executable",

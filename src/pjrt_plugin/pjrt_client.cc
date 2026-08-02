@@ -169,8 +169,9 @@ PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args) {
                   " size " << args->program->format_size << std::endl;
     std::cout << " Program code size: %zu\n" << args->program->code_size << std::endl;
 
-    std::shared_ptr<xla_mpi::MpiExecutable> mpi_executable =
-        xla_mpi::MpiExecutable::Create(format_str, args->program->code, args->program->code_size);
+    std::shared_ptr<xla_mpi::MpiExecutable> mpi_executable = xla_mpi::MpiExecutable::Create(
+        format_str, args->program->code, args->program->code_size,
+        args->compile_options, args->compile_options_size);
     if (!mpi_executable->IsValid()) {
         return MakeError("Failed to compile StableHLO program: " + mpi_executable->error());
     }
@@ -248,10 +249,32 @@ PJRT_Error* MPI_Client_LookupAddressableDevice(PJRT_Client_LookupAddressableDevi
 
 
 PJRT_Error* MPI_Client_DefaultDeviceAssignment(PJRT_Client_DefaultDeviceAssignment_Args* args) {
-    // TODO: not correct for multirank mpi
-    // Simple single-device assignment
-    if (args->default_assignment && args->default_assignment_size > 0) {
-        args->default_assignment[0] = 0;
+    if (args->num_partitions != 1) {
+        return MakeError("MPI_Client_DefaultDeviceAssignment: only num_partitions == 1 is supported");
+    }
+    if (args->num_replicas < 1) {
+        return MakeError("MPI_Client_DefaultDeviceAssignment: num_replicas must be >= 1");
+    }
+
+    PJRT_Client* client = GetClient(args->client);
+    if (!client || !client->client) {
+        return MakeError("MPI_Client_DefaultDeviceAssignment: no MPI client");
+    }
+
+    int world_size = client->client->world_size();
+    if (args->num_replicas > world_size) {
+        return MakeError("MPI_Client_DefaultDeviceAssignment: requested " +
+                          std::to_string(args->num_replicas) + " replicas but world size is only " +
+                          std::to_string(world_size));
+    }
+
+    size_t needed = static_cast<size_t>(args->num_replicas) * static_cast<size_t>(args->num_partitions);
+    if (args->default_assignment == nullptr || args->default_assignment_size < needed) {
+        return MakeError("MPI_Client_DefaultDeviceAssignment: default_assignment buffer too small");
+    }
+
+    for (int i = 0; i < args->num_replicas; ++i) {
+        args->default_assignment[i] = i;
     }
     return nullptr;
 }

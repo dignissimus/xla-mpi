@@ -21,6 +21,8 @@
 #include "xla/mlir/utils/type_util.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
 #include "xla/service/maybe_owning_device_address.h"
@@ -54,7 +56,8 @@ mlir::func::FuncOp FindEntryFunction(mlir::ModuleOp module) {
 }  // namespace
 
 std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, const char* code,
-                                                     size_t code_size) {
+                                                     size_t code_size, const char* compile_options,
+                                                     size_t compile_options_size) {
     std::shared_ptr<MpiExecutable> exe(new MpiExecutable());
 
     if (format != "mlir" && format != "hlo" && format != "hlo_with_config") {
@@ -144,6 +147,21 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
     for (const xla::Shape& shape : input_shapes) argument_layouts.push_back(&shape);
 
     xla::ExecutableBuildOptions build_options;
+    if (compile_options != nullptr && compile_options_size > 0) {
+        xla::CompileOptionsProto proto;
+        if (!proto.ParseFromArray(compile_options, static_cast<int>(compile_options_size))) {
+            exe->error_ = "Failed to parse CompileOptionsProto";
+            return exe;
+        }
+        absl::StatusOr<xla::CompileOptions> parsed_options = xla::CompileOptions::FromProto(proto);
+        if (!parsed_options.ok()) {
+            exe->error_ =
+                "Failed to convert CompileOptionsProto: " + std::string(parsed_options.status().message());
+            return exe;
+        }
+        build_options = parsed_options->executable_build_options;
+    }
+
     absl::StatusOr<std::vector<std::unique_ptr<xla::LocalExecutable>>> executables =
         (*client_or)->Compile(computation, argument_layouts, build_options);
     if (!executables.ok()) {
@@ -158,6 +176,14 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
 
     exe->executable_ = std::move((*executables)[0]);
     exe->client_ = *client_or;
+
+    exe->num_replicas_ = build_options.num_replicas();
+    exe->num_partitions_ = build_options.num_partitions();
+    if (!build_options.has_device_assignment()) {
+        exe->error_ = "MpiExecutable::Create: compile options must include a device assignment";
+        return exe;
+    }
+    exe->device_assignment_ = build_options.device_assignment();
 
     for (const OutputInfo& info : exe->output_info_) {
         exe->output_types_.push_back(static_cast<PJRT_Buffer_Type>(info.dtype));
@@ -257,12 +283,12 @@ PJRT_Error* MPI_Executable_Name(PJRT_Executable_Name_Args* args) {
 }
 
 PJRT_Error* MPI_Executable_NumReplicas(PJRT_Executable_NumReplicas_Args* args) {
-    args->num_replicas = 1;
+    args->num_replicas = static_cast<int>(args->executable->executable->num_replicas());
     return nullptr;
 }
 
 PJRT_Error* MPI_Executable_NumPartitions(PJRT_Executable_NumPartitions_Args* args) {
-    args->num_partitions = 1;
+    args->num_partitions = static_cast<int>(args->executable->executable->num_partitions());
     return nullptr;
 }
 
@@ -414,13 +440,8 @@ PJRT_Error* MPI_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args) {
 }
 
 PJRT_Error* MPI_LoadedExecutable_GetDeviceAssignment(PJRT_LoadedExecutable_GetDeviceAssignment_Args* args) {
-    int device_id = 0;
-    if (!args->executable->addressable_devices.empty()) {
-        device_id = args->executable->addressable_devices[0]->mpi_rank;
-    }
-
-    xla::DeviceAssignment device_assignment(/*replica_count=*/1, /*computation_count=*/1);
-    device_assignment(0, 0) = device_id;
+    const xla::DeviceAssignment& device_assignment =
+        args->executable->executable->executable->device_assignment();
 
     xla::DeviceAssignmentProto proto;
     device_assignment.Serialize(&proto);

@@ -8,6 +8,7 @@
 
 #include "pjrt_plugin/mpi_buffer.h"
 #include "xla/client/local_client.h"
+#include "xla/service/computation_placer.h"
 
 namespace xla_mpi {
 
@@ -24,7 +25,8 @@ struct MpiExecuteResult {
 // Compiles a StableHLO program using XLA's CPU compiler.
 class MpiExecutable {
 public:
-    static std::shared_ptr<MpiExecutable> Create(const std::string& format, const char* code, size_t code_size);
+    static std::shared_ptr<MpiExecutable> Create(const std::string& format, const char* code, size_t code_size,
+                                                 const char* compile_options, size_t compile_options_size);
     ~MpiExecutable();
 
     bool IsValid() const;
@@ -37,6 +39,10 @@ public:
     const std::vector<const char*>& output_memory_kinds() const { return output_memory_kinds_; }
     const std::vector<size_t>& output_memory_kind_sizes() const { return output_memory_kind_sizes_; }
     const std::string& fingerprint() const { return fingerprint_; }
+
+    int64_t num_replicas() const { return num_replicas_; }
+    int64_t num_partitions() const { return num_partitions_; }
+    const xla::DeviceAssignment& device_assignment() const { return device_assignment_; }
 
     MpiExecuteResult Execute(const std::vector<MpiBuffer*>& inputs);
 
@@ -58,6 +64,9 @@ private:
     std::vector<const char*> output_memory_kinds_;
     std::vector<size_t> output_memory_kind_sizes_;
     std::string fingerprint_;
+    int64_t num_replicas_ = 1;
+    int64_t num_partitions_ = 1;
+    xla::DeviceAssignment device_assignment_;
     std::unique_ptr<xla::LocalExecutable> executable_;
     // Not owned: xla::ClientLibrary owns a process-wide singleton per
     // platform. Needed again at execution time
