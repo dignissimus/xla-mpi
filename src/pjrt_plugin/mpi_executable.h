@@ -73,8 +73,7 @@ PJRT_Error* MPI_Executable_OutputDimensions(PJRT_Executable_OutputDimensions_Arg
 
 PJRT_Error* MPI_Executable_GetCompiledMemoryStats(PJRT_Executable_GetCompiledMemoryStats_Args* args);
 
-// PJRT_Error* MPI_LoadedExecutable_GetDeviceAssignment(PJRT_LoadedExecutable_GetDeviceAssignment_Args* args);
-// PJRT_Error* MPI_Executable_GetCompileOptions(PJRT_Executable_GetCompileOptions_Args* args);
+PJRT_Error* MPI_LoadedExecutable_GetDeviceAssignment(PJRT_LoadedExecutable_GetDeviceAssignment_Args* args);
 PJRT_Error* MPI_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args);
 
 #ifdef __cplusplus

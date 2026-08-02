@@ -115,6 +115,10 @@ struct PJRT_Event {
     bool ready = true;
 };
 
+struct PJRT_DeviceAssignmentSerialized {
+    std::string bytes;
+};
+
 PJRT_Error* MPI_Event_Destroy(PJRT_Event_Destroy_Args* args);
 PJRT_Error* MPI_Event_IsReady(PJRT_Event_IsReady_Args* args);
 PJRT_Error* MPI_Event_Error(PJRT_Event_Error_Args* args);

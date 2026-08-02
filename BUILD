@@ -28,5 +28,6 @@ cc_binary(
     deps = [
         "@mpi",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/service:computation_placer",
     ],
 )

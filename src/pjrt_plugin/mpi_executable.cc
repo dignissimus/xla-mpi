@@ -1,5 +1,10 @@
 #include "pjrt_plugin/mpi_executable.h"
 
+#include <string>
+
+#include "xla/service/computation_placer.h"
+#include "xla/xla_data.pb.h"
+
 namespace xla_mpi {
 
 std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, const char* code,
@@ -78,12 +83,30 @@ PJRT_Error* MPI_Executable_GetCompiledMemoryStats(PJRT_Executable_GetCompiledMem
     return MakeError("MPI_Executable_GetCompiledMemoryStats not yet implemented");
 }
 
-// PJRT_Error* MPI_LoadedExecutable_GetDeviceAssignment(PJRT_LoadedExecutable_GetDeviceAssignment_Args* args) {
-//     return MakeError("MPI_LoadedExecutable_GetDeviceAssignment not yet implemented");
-// }
-// PJRT_Error* MPI_Executable_GetCompileOptions(PJRT_Executable_GetCompileOptions_Args* args) {
-//     return MakeError("MPI_Executable_GetCompileOptions not yet implemented");
-// }
+PJRT_Error* MPI_LoadedExecutable_GetDeviceAssignment(PJRT_LoadedExecutable_GetDeviceAssignment_Args* args) {
+    int device_id = 0;
+    if (!args->executable->addressable_devices.empty()) {
+        device_id = args->executable->addressable_devices[0]->mpi_rank;
+    }
+
+    xla::DeviceAssignment device_assignment(/*replica_count=*/1, /*computation_count=*/1);
+    device_assignment(0, 0) = device_id;
+
+    xla::DeviceAssignmentProto proto;
+    device_assignment.Serialize(&proto);
+
+    auto* serialized = new PJRT_DeviceAssignmentSerialized();
+    if (!proto.SerializeToString(&serialized->bytes)) {
+        delete serialized;
+        return MakeError("Failed to serialize device assignment");
+    }
+    args->serialized_device_assignment = serialized;
+    args->serialized_bytes = serialized->bytes.data();
+    args->serialized_bytes_size = serialized->bytes.size();
+    args->serialized_device_assignment_deleter =
+        [](PJRT_DeviceAssignmentSerialized* da) { delete da; };
+    return nullptr;
+}
 
 PJRT_Error* MPI_Executable_Fingerprint(PJRT_Executable_Fingerprint_Args* args) {
     return MakeError("MPI_Executable_Fingerprint not yet implemented");
