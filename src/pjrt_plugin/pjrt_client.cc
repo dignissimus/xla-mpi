@@ -4,8 +4,10 @@
 #include "pjrt_plugin/mpi_executable.h"
 
 #include <mpi.h>
+#include <exception>
 #include <iostream>
 #include <mutex>
+#include <string>
 
 PJRT_Error* MPI_Plugin_Initialize(PJRT_Plugin_Initialize_Args* args) {
     int initialized;
@@ -198,7 +200,34 @@ PJRT_Error* MPI_Client_Compile(PJRT_Client_Compile_Args* args) {
 }
 
 PJRT_Error* MPI_Client_BufferFromHostBuffer(PJRT_Client_BufferFromHostBuffer_Args* args) {
-    return MakeError("PJRT_Client_BufferFromHostBuffer not yet implemented");
+    PJRT_Client* client = GetClient(args->client);
+    if (!client) {
+        return MakeError("MPI_Client_BufferFromHostBuffer: no MPI client");
+    }
+
+    std::vector<int64_t> shape(args->dims, args->dims + args->num_dims);
+    std::unique_ptr<xla_mpi::MpiBuffer> buffer;
+    try {
+        buffer = xla_mpi::MpiBuffer::CreateFromHost(args->data, args->type, shape);
+    } catch (const std::exception& e) {
+        return MakeError(std::string("MPI_Client_BufferFromHostBuffer: ") + e.what());
+    }
+
+    PJRT_Device* device = args->device;
+    if (!device && args->memory) {
+        device = static_cast<PJRT_Memory_Impl*>(args->memory)->device;
+    }
+
+    PJRT_Buffer* pjrt_buffer = new PJRT_Buffer();
+    pjrt_buffer->buffer = std::move(buffer);
+    pjrt_buffer->client = client;
+    pjrt_buffer->device = device;
+    pjrt_buffer->memory = args->memory ? args->memory
+                                        : (device ? device->default_memory : nullptr);
+
+    args->buffer = pjrt_buffer;
+    args->done_with_host_buffer = new PJRT_Event{.ready = true};
+    return nullptr;
 }
 
 
