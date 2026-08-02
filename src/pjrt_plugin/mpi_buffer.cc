@@ -11,7 +11,10 @@
 namespace xla_mpi {
 
 MpiBuffer::MpiBuffer(PJRT_Buffer_Type dtype, std::vector<int64_t> shape)
-    : dtype_(dtype), shape_(std::move(shape)), data_(byte_size()) {}
+    : dtype_(dtype), shape_(std::move(shape)),
+      data_(static_cast<uint8_t*>(tsl::port::AlignedMalloc(
+                byte_size(), static_cast<std::align_val_t>(xla::cpu::MinAlign()))),
+            tsl::port::AlignedFree) {}
 
 std::unique_ptr<MpiBuffer> MpiBuffer::CreateFromHost(
     const void* data, PJRT_Buffer_Type dtype, const std::vector<int64_t>& shape) {
@@ -20,6 +23,16 @@ std::unique_ptr<MpiBuffer> MpiBuffer::CreateFromHost(
         std::memcpy(buffer->data(), data, buffer->byte_size());
     }
     return buffer;
+}
+
+MpiBuffer::MpiBuffer(PJRT_Buffer_Type dtype, std::vector<int64_t> shape,
+                      std::unique_ptr<uint8_t[], std::function<void(void*)>> data)
+    : dtype_(dtype), shape_(std::move(shape)), data_(std::move(data)) {}
+
+std::unique_ptr<MpiBuffer> MpiBuffer::AdoptFromXla(void* data, PJRT_Buffer_Type dtype, std::vector<int64_t> shape) {
+    return std::unique_ptr<MpiBuffer>(new MpiBuffer(
+        dtype, std::move(shape),
+        std::unique_ptr<uint8_t[], std::function<void(void*)>>(static_cast<uint8_t*>(data), tsl::port::AlignedFree)));
 }
 
 size_t MpiBuffer::num_elements() const {

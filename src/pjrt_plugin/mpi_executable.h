@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "pjrt_plugin/mpi_buffer.h"
+#include "xla/client/local_client.h"
 
 namespace xla_mpi {
 
@@ -20,24 +21,35 @@ struct MpiExecuteResult {
     std::string error_message;
 };
 
+// Compiles a StableHLO program using XLA's CPU compiler.
 class MpiExecutable {
 public:
     static std::shared_ptr<MpiExecutable> Create(const std::string& format, const char* code, size_t code_size);
-    ~MpiExecutable() = default;
+    ~MpiExecutable();
 
-    bool IsValid() const { return valid_; }
-    std::string error() const { return error_; }
-    size_t num_outputs() const { return output_info_.size(); }
+    bool IsValid() const;
+    std::string error() const;
+    size_t num_outputs() const;
     const std::vector<OutputInfo>& output_info() const { return output_info_; }
 
     MpiExecuteResult Execute(const std::vector<MpiBuffer*>& inputs);
 
 private:
+    struct ArgInfo {
+        int dtype;
+        std::vector<int64_t> shape;
+    };
+
     MpiExecutable() = default;
 
     bool valid_ = false;
     std::string error_;
+    std::vector<ArgInfo> input_info_;
     std::vector<OutputInfo> output_info_;
+    std::unique_ptr<xla::LocalExecutable> executable_;
+    // Not owned: xla::ClientLibrary owns a process-wide singleton per
+    // platform. Needed again at execution time
+    xla::LocalClient* client_ = nullptr;
 };
 
 }  // namespace xla_mpi

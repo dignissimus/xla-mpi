@@ -3,7 +3,10 @@
 
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include "tsl/platform/mem.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 
 namespace xla_mpi {
@@ -15,9 +18,11 @@ public:
 
     static std::unique_ptr<MpiBuffer> CreateFromHost(const void* data, PJRT_Buffer_Type dtype, const std::vector<int64_t>& shape);
 
-    void* data() { return data_.data(); }
-    const void* data() const { return data_.data(); }
-    
+    static std::unique_ptr<MpiBuffer> AdoptFromXla(void* data, PJRT_Buffer_Type dtype, std::vector<int64_t> shape);
+
+    void* data() { return data_.get(); }
+    const void* data() const { return data_.get(); }
+
     PJRT_Buffer_Type dtype() const { return dtype_; }
     const std::vector<int64_t>& shape() const { return shape_; }
     size_t num_elements() const;
@@ -25,9 +30,12 @@ public:
     size_t byte_size() const;
 
 private:
+    MpiBuffer(PJRT_Buffer_Type dtype, std::vector<int64_t> shape,
+              std::unique_ptr<uint8_t[], std::function<void(void*)>> data);
+
     PJRT_Buffer_Type dtype_;
     std::vector<int64_t> shape_;
-    std::vector<uint8_t> data_;
+    std::unique_ptr<uint8_t[], std::function<void(void*)>> data_;
 };
 
 } // namespace xla_mpi

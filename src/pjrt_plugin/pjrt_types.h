@@ -109,6 +109,7 @@ struct PJRT_LoadedExecutable {
     PJRT_Executable* executable = nullptr;
     PJRT_Client* client = nullptr;
     std::vector<PJRT_Device*> addressable_devices;
+    bool deleted = false;
 };
 
 struct PJRT_Event {
