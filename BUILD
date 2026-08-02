@@ -51,6 +51,7 @@ cc_binary(
         "@xla//xla/service:executable",
         "@xla//xla/service:maybe_owning_device_address",
         "@xla//xla/service:shaped_buffer",
+        "@xla//xla/service/cpu:cpu_executable_run_options",
         "@xla//xla/service/cpu:cpu_transfer_manager",
         "@xla//xla/service/cpu:cpu_compiler",
         "@xla//xla/backends/cpu:alignment",

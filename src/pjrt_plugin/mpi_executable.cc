@@ -1,4 +1,7 @@
 #include "pjrt_plugin/mpi_executable.h"
+#include "pjrt_plugin/mpi_collectives.h"
+
+#include <mpi.h>
 
 #include <cstdint>
 #include <cstring>
@@ -24,6 +27,7 @@
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_executable_run_options.h"
 #include "xla/service/executable.h"
 #include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/shaped_buffer.h"
@@ -238,9 +242,19 @@ MpiExecuteResult MpiExecutable::Execute(const std::vector<MpiBuffer*>& inputs) {
         arguments.push_back(std::move(input));
     }
 
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    xla::cpu::CpuExecutableRunOptions cpu_run_options;
+    cpu_run_options.set_collectives(&xla_mpi::GetMpiSingleton().collectives());
+
     xla::ExecutableRunOptions run_options;
     run_options.set_allocator(client_->backend().memory_allocator());
-    absl::StatusOr<xla::ExecutionOutput> output = executable_->Run(std::move(arguments), run_options);
+    run_options.set_cpu_executable_run_options(&cpu_run_options);
+    run_options.set_device_ordinal(rank);
+    run_options.set_physical_device_ordinal(0);
+    run_options.set_device_assignment(&device_assignment_);
+    absl::StatusOr<xla::ExecutionOutput> output = executable_->RunAsync(std::move(arguments), run_options);
     if (!output.ok()) {
         result.error_message = "XLA execution failed: " + std::string(output.status().message());
         return result;
