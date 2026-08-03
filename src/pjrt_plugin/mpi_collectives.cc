@@ -23,8 +23,6 @@
 
 namespace xla_mpi {
 
-namespace {
-
 absl::StatusOr<MPI_Datatype> PrimitiveTypeToMpiType(xla::PrimitiveType element_type) {
     switch (element_type) {
         case xla::S8:
@@ -59,9 +57,11 @@ absl::StatusOr<MPI_Datatype> PrimitiveTypeToMpiType(xla::PrimitiveType element_t
     }
 }
 
+namespace {
 bool MpiTypeIsComplex(MPI_Datatype type) {
     return type == MPI_C_COMPLEX || type == MPI_C_DOUBLE_COMPLEX;
 }
+}  // namespace
 
 absl::StatusOr<MPI_Op> ReductionKindToMpiOp(xla::ReductionKind reduction_kind, MPI_Datatype type) {
     switch (reduction_kind) {
@@ -89,8 +89,6 @@ absl::Status MpiErrorToAbslStatus(int error) {
     }
     return absl::OkStatus();
 }
-
-}  // namespace
 
 MpiCommunicator::MpiCommunicator(int color, int key) {
     MPI_Comm_split(MPI_COMM_WORLD, color, key, &comm_);

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "mpi.h"
@@ -22,6 +23,10 @@
 #include "xla/xla_data.pb.h"
 
 namespace xla_mpi {
+
+absl::StatusOr<MPI_Datatype> PrimitiveTypeToMpiType(xla::PrimitiveType element_type);
+absl::StatusOr<MPI_Op> ReductionKindToMpiOp(xla::ReductionKind reduction_kind, MPI_Datatype type);
+absl::Status MpiErrorToAbslStatus(int error);
 
 class MpiCommunicator : public xla::Communicator {
 public:
