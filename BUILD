@@ -7,6 +7,8 @@ cc_binary(
         "src/pjrt_plugin/mpi_collectives.cc",
         "src/pjrt_plugin/mpi_collectives.h",
         "src/pjrt_plugin/mpi_executable.cc",
+        "src/pjrt_plugin/mpi_process_group.cc",
+        "src/pjrt_plugin/mpi_process_group.h",
         "src/pjrt_plugin/mpi_executable.h",
         "src/pjrt_plugin/pjrt_api.cc",
         "src/pjrt_plugin/pjrt_client.cc",
