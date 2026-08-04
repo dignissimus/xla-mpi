@@ -495,6 +495,145 @@ void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& p
     op.erase();
 }
 
+bool MatchSendForAsyncRewrite(mlir::stablehlo::SendOp op) {
+    if (op.getIsHostTransfer()) return false;
+    if (op.getInputs().size() != 1) {
+        LOG(WARNING) << "MatchSendForAsyncRewrite: multi-operand stablehlo.send shares one token "
+                        "across all operands, which xampi does not support splitting for async "
+                        "operations, so will use synchronous communication.";
+        return false;
+    }
+    auto attr = op.getSourceTargetPairsAttr();
+    if (!attr) {
+        LOG(WARNING) << "MatchSendForAsyncRewrite: source_target_pairs is not set, so will use "
+                        "synchronous communication.";
+        return false;
+    }
+    return IsPlainDenseGroups(attr, "MatchSendForAsyncRewrite");
+}
+
+void RewriteAsAsyncSend(mlir::stablehlo::SendOp op, const ProgramInfo& program_info) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    mlir::Value operand = op.getInputs()[0];
+    mlir::Value incoming_token = op.getToken();
+    mlir::Type token_type = op.getToken().getType();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolvePermuteFamilyStrategy(channel_id);
+    mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+    llvm::SmallVector<mlir::NamedAttribute, 8> config_attrs = {
+        builder.getNamedAttr("channel_id", builder.getI64IntegerAttr(channel_id)),
+        request_buffer,
+    };
+    if (!AppendProcessGroupAttrs(builder, op.getSourceTargetPairsAttr(), strategy, program_info,
+                                /*include_group_metadata=*/false, /*include_my_rank=*/true,
+                                config_attrs)) {
+        LOG(FATAL) << "MatchSendForAsyncRewrite verified source_target_pairs is "
+                      "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                      "such.";
+    }
+    auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+    llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+        builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.send_start")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("backend_config", backend_config),
+    };
+    auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{token_type}, mlir::ValueRange{operand, incoming_token}, start_attrs);
+
+    llvm::SmallVector<mlir::NamedAttribute, 4> done_attrs = {
+        builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.send_done")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+    };
+    auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{token_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+    op.getResult().replaceAllUsesWith(done_op.getResult(0));
+    op.erase();
+}
+
+bool MatchRecvForAsyncRewrite(mlir::stablehlo::RecvOp op) {
+    if (op.getIsHostTransfer()) return false;
+    if (op.getNumResults() != 2) {
+        LOG(WARNING) << "MatchRecvForAsyncRewrite: multi-result stablehlo.recv shares one token "
+                        "across all results, which xampi does not support splitting for async "
+                        "operations, so will use synchronous communication.";
+        return false;
+    }
+    auto attr = op.getSourceTargetPairsAttr();
+    if (!attr) {
+        LOG(WARNING) << "MatchRecvForAsyncRewrite: source_target_pairs is not set, so will use "
+                        "synchronous communication.";
+        return false;
+    }
+    return IsPlainDenseGroups(attr, "MatchRecvForAsyncRewrite");
+}
+
+void RewriteAsAsyncRecv(mlir::stablehlo::RecvOp op, const ProgramInfo& program_info) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    mlir::Value incoming_token = op.getToken();
+    mlir::Type result_type = op.getResult(0).getType();
+    mlir::Type token_type = op.getResult(1).getType();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolvePermuteFamilyStrategy(channel_id);
+    mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+    llvm::SmallVector<mlir::NamedAttribute, 8> config_attrs = {
+        builder.getNamedAttr("channel_id", builder.getI64IntegerAttr(channel_id)),
+        request_buffer,
+    };
+    if (!AppendProcessGroupAttrs(builder, op.getSourceTargetPairsAttr(), strategy, program_info,
+                                /*include_group_metadata=*/false, /*include_my_rank=*/true,
+                                config_attrs)) {
+        LOG(FATAL) << "MatchRecvForAsyncRewrite verified source_target_pairs is "
+                      "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                      "such.";
+    }
+    auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+    llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+        builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.recv_start")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("backend_config", backend_config),
+    };
+    auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type, token_type}, mlir::ValueRange{incoming_token}, start_attrs);
+
+    auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+        context, /*outputTupleIndices=*/{0}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+    llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+        builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.recv_done")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+        builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+    };
+    auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type, token_type},
+        mlir::ValueRange{start_op.getResult(0), start_op.getResult(1)}, done_attrs);
+
+    op.getResult(0).replaceAllUsesWith(done_op.getResult(0));
+    op.getResult(1).replaceAllUsesWith(done_op.getResult(1));
+    op.erase();
+}
+
 void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& program_info) {
     int32_t next_group_tag = 0;
 
@@ -540,6 +679,18 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
         if (MatchAllToAllForAsyncRewrite(op)) all_to_all_rewrites.push_back(op);
     });
     for (mlir::stablehlo::AllToAllOp op : all_to_all_rewrites) RewriteAsAsyncAllToAll(op, program_info);
+
+    llvm::SmallVector<mlir::stablehlo::SendOp> send_rewrites;
+    entry.walk([&](mlir::stablehlo::SendOp op) {
+        if (MatchSendForAsyncRewrite(op)) send_rewrites.push_back(op);
+    });
+    for (mlir::stablehlo::SendOp op : send_rewrites) RewriteAsAsyncSend(op, program_info);
+
+    llvm::SmallVector<mlir::stablehlo::RecvOp> recv_rewrites;
+    entry.walk([&](mlir::stablehlo::RecvOp op) {
+        if (MatchRecvForAsyncRewrite(op)) recv_rewrites.push_back(op);
+    });
+    for (mlir::stablehlo::RecvOp op : recv_rewrites) RewriteAsAsyncRecv(op, program_info);
 }
 
 mlir::func::FuncOp FindEntryFunction(mlir::ModuleOp module) {

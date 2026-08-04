@@ -222,14 +222,29 @@ xla::Future<> MpiCommunicator::Broadcast(::stream_executor::DeviceAddressBase,
     return xla::Unimplemented("Broadcast is not implemented");
 }
 
-xla::Future<> MpiCommunicator::Send(::stream_executor::DeviceAddressBase, xla::PrimitiveType,
-                                    size_t, xla::RankId, const Executor&) {
-    return xla::Unimplemented("Send is not implemented");
+xla::Future<> MpiCommunicator::Send(::stream_executor::DeviceAddressBase send_buffer,
+                                    xla::PrimitiveType dtype, size_t count, xla::RankId peer,
+                                    const Executor& executor) {
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(dtype);
+    if (!type.ok()) return type.status();
+    constexpr int kTag = 0;
+    absl::Status status = MpiErrorToAbslStatus(
+        MPI_Send(send_buffer.opaque(), count, *type, static_cast<int>(peer.value()), kTag, comm_));
+    if (!status.ok()) return status;
+    return absl::OkStatus();
 }
 
-xla::Future<> MpiCommunicator::Recv(::stream_executor::DeviceAddressBase, xla::PrimitiveType,
-                                    size_t, xla::RankId, const Executor&) {
-    return xla::Unimplemented("Recv is not implemented");
+xla::Future<> MpiCommunicator::Recv(::stream_executor::DeviceAddressBase recv_buffer,
+                                    xla::PrimitiveType dtype, size_t count, xla::RankId peer,
+                                    const Executor& executor) {
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(dtype);
+    if (!type.ok()) return type.status();
+    constexpr int kTag = 0;
+    absl::Status status = MpiErrorToAbslStatus(MPI_Recv(recv_buffer.opaque(), count, *type,
+                                                        static_cast<int>(peer.value()), kTag, comm_,
+                                                        MPI_STATUS_IGNORE));
+    if (!status.ok()) return status;
+    return absl::OkStatus();
 }
 
 std::string MpiCommunicator::ToString() const {

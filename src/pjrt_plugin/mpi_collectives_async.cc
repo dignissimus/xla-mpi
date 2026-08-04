@@ -361,6 +361,95 @@ absl::Status AllToAllDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
+absl::Status SendStart(ffi::AnyBuffer input, ffi::Token incoming_token,
+                       ffi::Result<ffi::Token> outgoing_token, int64_t channel_id,
+                       absl::Span<const int64_t> groups, int32_t process_group_strategy,
+                       int64_t num_partitions, absl::Span<const int64_t> device_assignment,
+                       int64_t my_rank, int64_t my_replica, int64_t my_partition,
+                       int64_t request_buffer) {
+    (void)incoming_token;
+    (void)outgoing_token;
+    int tag = static_cast<int>(channel_id);
+    auto strategy = static_cast<ProcessGroupStrategy>(process_group_strategy);
+
+    std::vector<MPI_Request> requests;
+    for (size_t i = 0; i + 1 < groups.size(); i += 2) {
+        int64_t source_id = groups[i];
+        int64_t target_id = groups[i + 1];
+        absl::StatusOr<int> source_dev = ResolvePermuteRank(strategy, source_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        absl::StatusOr<int> target_dev = ResolvePermuteRank(strategy, target_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        if (!source_dev.ok()) return source_dev.status();
+        if (!target_dev.ok()) return target_dev.status();
+        if (*source_dev != my_rank) continue;
+
+        requests.emplace_back();
+        absl::Status status = MpiErrorToAbslStatus(
+            MPI_Isend(input.untyped_data(), input.size_bytes(), MPI_BYTE, *target_dev, tag,
+                     MPI_COMM_WORLD, &requests.back()));
+        if (!status.ok()) return status;
+    }
+
+    reinterpret_cast<MpiRequestBuffer*>(request_buffer)->Store(std::move(requests));
+    return absl::OkStatus();
+}
+
+absl::Status SendDone(ffi::Token incoming_token, ffi::Result<ffi::Token> outgoing_token,
+                      int64_t request_buffer) {
+    (void)incoming_token;
+    (void)outgoing_token;
+    return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
+}
+
+absl::Status RecvStart(ffi::Token incoming_token, ffi::Result<ffi::AnyBuffer> recv,
+                       ffi::Result<ffi::Token> outgoing_token, int64_t channel_id,
+                       absl::Span<const int64_t> groups, int32_t process_group_strategy,
+                       int64_t num_partitions, absl::Span<const int64_t> device_assignment,
+                       int64_t my_rank, int64_t my_replica, int64_t my_partition,
+                       int64_t request_buffer) {
+    (void)incoming_token;
+    (void)outgoing_token;
+    int tag = static_cast<int>(channel_id);
+    auto strategy = static_cast<ProcessGroupStrategy>(process_group_strategy);
+
+    std::vector<MPI_Request> requests;
+    bool found = false;
+    for (size_t i = 0; i + 1 < groups.size(); i += 2) {
+        int64_t source_id = groups[i];
+        int64_t target_id = groups[i + 1];
+        absl::StatusOr<int> source_dev = ResolvePermuteRank(strategy, source_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        absl::StatusOr<int> target_dev = ResolvePermuteRank(strategy, target_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        if (!source_dev.ok()) return source_dev.status();
+        if (!target_dev.ok()) return target_dev.status();
+        if (*target_dev != my_rank) continue;
+
+        found = true;
+        requests.emplace_back();
+        absl::Status status = MpiErrorToAbslStatus(
+            MPI_Irecv(recv->untyped_data(), recv->size_bytes(), MPI_BYTE, *source_dev, tag,
+                     MPI_COMM_WORLD, &requests.back()));
+        if (!status.ok()) return status;
+    }
+    if (!found) {
+        std::memset(recv->untyped_data(), 0, recv->size_bytes());
+    }
+
+    reinterpret_cast<MpiRequestBuffer*>(request_buffer)->Store(std::move(requests));
+    return absl::OkStatus();
+}
+
+absl::Status RecvDone(ffi::AnyBuffer recv_buffer, ffi::Token incoming_token,
+                      ffi::Result<ffi::AnyBuffer> result, ffi::Result<ffi::Token> outgoing_token,
+                      int64_t request_buffer) {
+    (void)recv_buffer;
+    (void)incoming_token;
+    (void)outgoing_token;
+    return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
+}
+
 XLA_FFI_DEFINE_HANDLER(kAllReduceStart, AllReduceStart,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
@@ -481,6 +570,55 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.collective_permute_done",
                          kCollectivePermuteDone);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.all_to_all_start", "Host", kAllToAllStart);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.all_to_all_done", "Host", kAllToAllDone);
+
+XLA_FFI_DEFINE_HANDLER(kSendStart, SendStart,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Arg<ffi::Token>()
+                           .Ret<ffi::Token>()
+                           .Attr<int64_t>("channel_id")
+                           .Attr<absl::Span<const int64_t>>("groups")
+                           .Attr<int32_t>("process_group_strategy")
+                           .Attr<int64_t>("num_partitions")
+                           .Attr<absl::Span<const int64_t>>("device_assignment")
+                           .Attr<int64_t>("my_rank")
+                           .Attr<int64_t>("my_replica")
+                           .Attr<int64_t>("my_partition")
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_DEFINE_HANDLER(kSendDone, SendDone,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::Token>()
+                           .Ret<ffi::Token>()
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_DEFINE_HANDLER(kRecvStart, RecvStart,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::Token>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Ret<ffi::Token>()
+                           .Attr<int64_t>("channel_id")
+                           .Attr<absl::Span<const int64_t>>("groups")
+                           .Attr<int32_t>("process_group_strategy")
+                           .Attr<int64_t>("num_partitions")
+                           .Attr<absl::Span<const int64_t>>("device_assignment")
+                           .Attr<int64_t>("my_rank")
+                           .Attr<int64_t>("my_replica")
+                           .Attr<int64_t>("my_partition")
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_DEFINE_HANDLER(kRecvDone, RecvDone,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Arg<ffi::Token>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Ret<ffi::Token>()
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.send_start", "Host", kSendStart);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.send_done", "Host", kSendDone);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.recv_start", "Host", kRecvStart);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.recv_done", "Host", kRecvDone);
 
 }  // namespace
 
