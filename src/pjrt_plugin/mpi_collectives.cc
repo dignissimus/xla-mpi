@@ -135,11 +135,20 @@ xla::Future<> MpiCommunicator::AllGather(::stream_executor::DeviceAddressBase,
     return xla::Unimplemented("AllGather is not implemented");
 }
 
-xla::Future<> MpiCommunicator::ReduceScatter(::stream_executor::DeviceAddressBase,
-                                             ::stream_executor::DeviceAddressBase,
-                                             xla::PrimitiveType, size_t, xla::ReductionKind,
-                                             const Executor&) {
-    return xla::Unimplemented("ReduceScatter is not implemented");
+xla::Future<> MpiCommunicator::ReduceScatter(::stream_executor::DeviceAddressBase send_buffer,
+                                             ::stream_executor::DeviceAddressBase recv_buffer,
+                                             xla::PrimitiveType dtype, size_t count,
+                                             xla::ReductionKind reduction_kind,
+                                             const Executor& executor) {
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(dtype);
+    if (!type.ok()) return type.status();
+    absl::StatusOr<MPI_Op> op = ReductionKindToMpiOp(reduction_kind, *type);
+    if (!op.ok()) return op.status();
+    std::vector<int> recvcounts(mpi_size_, static_cast<int>(count));
+    absl::Status status = MpiErrorToAbslStatus(
+        MPI_Reduce_scatter(send_buffer.opaque(), recv_buffer.opaque(), recvcounts.data(), *type, *op, comm_));
+    if (!status.ok()) return status;
+    return absl::OkStatus();
 }
 
 xla::Future<> MpiCommunicator::Broadcast(::stream_executor::DeviceAddressBase,

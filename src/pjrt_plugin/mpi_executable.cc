@@ -113,6 +113,12 @@ mlir::NamedAttribute MakeRequestBufferAttr(mlir::OpBuilder& builder) {
                                 builder.getI64IntegerAttr(reinterpret_cast<int64_t>(buffer)));
 }
 
+mlir::NamedAttribute MakeReduceScatterRequestBufferAttr(mlir::OpBuilder& builder) {
+    auto* buffer = new MpiReduceScatterRequestBuffer();
+    return builder.getNamedAttr("request_buffer",
+                                builder.getI64IntegerAttr(reinterpret_cast<int64_t>(buffer)));
+}
+
 ProcessGroupStrategy ResolveReplicaFamilyStrategy(int64_t channel_id, bool use_global_device_ids) {
     if (channel_id <= 0) return ProcessGroupStrategy::kCrossReplica;
     return use_global_device_ids ? ProcessGroupStrategy::kFlattenedIds
@@ -125,6 +131,7 @@ int64_t GetChannelId(std::optional<mlir::stablehlo::ChannelHandleAttr> channel_h
 
 bool AppendProcessGroupAttrs(mlir::OpBuilder& builder, mlir::Attribute groups_attr,
                              ProcessGroupStrategy strategy, const ProgramInfo& program_info,
+                             bool include_my_rank,
                              llvm::SmallVectorImpl<mlir::NamedAttribute>& attrs) {
     auto groups = mlir::dyn_cast<mlir::DenseIntElementsAttr>(groups_attr);
     if (!groups) return false;
@@ -143,6 +150,10 @@ bool AppendProcessGroupAttrs(mlir::OpBuilder& builder, mlir::Attribute groups_at
     attrs.push_back(builder.getNamedAttr("num_partitions",
                                         builder.getI64IntegerAttr(program_info.num_partitions)));
     attrs.push_back(builder.getNamedAttr("device_assignment", device_assignment_attr));
+    if (include_my_rank) {
+        attrs.push_back(
+            builder.getNamedAttr("my_rank", builder.getI64IntegerAttr(program_info.my_rank)));
+    }
     attrs.push_back(
         builder.getNamedAttr("my_replica", builder.getI64IntegerAttr(program_info.my_replica)));
     attrs.push_back(
@@ -191,7 +202,7 @@ void RewriteAsAsyncAllReduce(mlir::stablehlo::AllReduceOp op, xla::ReductionKind
             request_buffer,
         };
         if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
-                                    config_attrs)) {
+                                    /*include_my_rank=*/false, config_attrs)) {
             LOG(FATAL) << "MatchAllReduceForAsyncRewrite verified replica_groups is "
                           "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
                           "such.";
@@ -224,6 +235,68 @@ void RewriteAsAsyncAllReduce(mlir::stablehlo::AllReduceOp op, xla::ReductionKind
     op.erase();
 }
 
+std::optional<xla::ReductionKind> MatchReduceScatterForAsyncRewrite(mlir::stablehlo::ReduceScatterOp op) {
+    if (!IsPlainDenseGroups(op.getReplicaGroups(), "MatchReduceScatterForAsyncRewrite")) return std::nullopt;
+    return MatchReductionBodyOrWarn(op.getComputation(), "MatchReduceScatterForAsyncRewrite");
+}
+
+void RewriteAsAsyncReduceScatter(mlir::stablehlo::ReduceScatterOp op, xla::ReductionKind reduction_kind,
+                                 const ProgramInfo& program_info, int32_t group_tag) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    mlir::Value operand = op.getOperand();
+    mlir::Type result_type = op.getResult().getType();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolveReplicaFamilyStrategy(channel_id, op.getUseGlobalDeviceIds());
+    mlir::NamedAttribute request_buffer = MakeReduceScatterRequestBufferAttr(builder);
+
+    llvm::SmallVector<mlir::NamedAttribute, 9> config_attrs = {
+        builder.getNamedAttr("reduction_kind",
+                            builder.getI32IntegerAttr(static_cast<int32_t>(reduction_kind))),
+        builder.getNamedAttr("scatter_dimension", builder.getI64IntegerAttr(op.getScatterDimension())),
+        builder.getNamedAttr("group_tag", builder.getI32IntegerAttr(group_tag)),
+        request_buffer,
+    };
+    if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
+                                /*include_my_rank=*/true, config_attrs)) {
+        LOG(FATAL) << "MatchReduceScatterForAsyncRewrite verified replica_groups is "
+                      "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                      "such.";
+    }
+    auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+    llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+        builder.getNamedAttr("call_target_name",
+                            builder.getStringAttr("xla_mpi.reduce_scatter_start")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("backend_config", backend_config),
+    };
+    auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{operand}, start_attrs);
+
+    auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+        context, /*outputTupleIndices=*/{}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+    llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+        builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.reduce_scatter_done")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+        builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+    };
+    auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+    op.getResult().replaceAllUsesWith(done_op.getResult(0));
+    op.erase();
+}
+
 void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& program_info) {
     int32_t next_group_tag = 0;
 
@@ -235,6 +308,17 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
     });
     for (auto& [op, kind] : all_reduce_rewrites) {
         RewriteAsAsyncAllReduce(op, kind, program_info, next_group_tag);
+    }
+
+    llvm::SmallVector<std::pair<mlir::stablehlo::ReduceScatterOp, xla::ReductionKind>>
+        reduce_scatter_rewrites;
+    entry.walk([&](mlir::stablehlo::ReduceScatterOp op) {
+        if (std::optional<xla::ReductionKind> kind = MatchReduceScatterForAsyncRewrite(op)) {
+            reduce_scatter_rewrites.push_back({op, *kind});
+        }
+    });
+    for (auto& [op, kind] : reduce_scatter_rewrites) {
+        RewriteAsAsyncReduceScatter(op, kind, program_info, next_group_tag++);
     }
 }
 
