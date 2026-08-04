@@ -1,7 +1,10 @@
 #include "pjrt_plugin/mpi_collectives.h"
+#include "pjrt_plugin/mpi_process_group.h"
 
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -92,13 +95,14 @@ absl::Status MpiErrorToAbslStatus(int error) {
     return absl::OkStatus();
 }
 
-MpiCommunicator::MpiCommunicator(int color, int key) {
-    MPI_Comm_split(MPI_COMM_WORLD, color, key, &comm_);
+MpiCommunicator::MpiCommunicator(MPI_Comm comm) : comm_(comm) {
     MPI_Comm_rank(comm_, &mpi_rank_);
     MPI_Comm_size(comm_, &mpi_size_);
 }
 
-MpiCommunicator::~MpiCommunicator() { MPI_Comm_free(&comm_); }
+MpiCommunicator::~MpiCommunicator() {
+    if (comm_ != MPI_COMM_WORLD) MPI_Comm_free(&comm_);
+}
 
 xla::Future<> MpiCommunicator::AllReduce(::stream_executor::DeviceAddressBase send_buffer,
                                          ::stream_executor::DeviceAddressBase recv_buffer,
@@ -251,12 +255,35 @@ std::string MpiCommunicator::ToString() const {
     return absl::StrCat("MpiCommunicator [rank: ", mpi_rank_, " num_ranks: ", mpi_size_, "]");
 }
 
+namespace {
+
+// Sets PJRT_NPROC which is read by xla::DefaultThreadPoolSize()
+// Priority: our `XLA_MPI_CORES_PER_RANK` environment variable, then Slurm's per-task allocation. If
+// neither is set then PJRT_NPROC is left untouched and XLA's own autodetection decides the pool size.
+void ConfigureThreadPoolSizeFromEnvironment() {
+    const char* explicit_override = std::getenv("XLA_MPI_CORES_PER_RANK");
+    const char* slurm_hint = std::getenv("SLURM_CPUS_PER_TASK");
+    const char* cores = explicit_override ? explicit_override : slurm_hint;
+    if (cores != nullptr) {
+        setenv("PJRT_NPROC", cores, /*overwrite=*/1);
+    }
+}
+
+}  // namespace
+
 void Mpi::Init() {
+    ConfigureThreadPoolSizeFromEnvironment();
+
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (!initialized) {
         int provided = 0;
-        MPI_Init_thread(nullptr, nullptr, MPI_THREAD_FUNNELED, &provided);
+        MPI_Init_thread(nullptr, nullptr, MPI_THREAD_MULTIPLE, &provided);
+        if (provided < MPI_THREAD_MULTIPLE) {
+            std::cerr << "WARNING: MPI_THREAD_MULTIPLE requested but not supported by this MPI "
+                        "implementation"
+                     << std::endl;
+        }
     }
 }
 
@@ -272,28 +299,38 @@ absl::StatusOr<std::vector<std::unique_ptr<xla::Communicator>>>
 MpiCollectives::CreateCommunicators(const xla::CliqueKey& clique_key,
                                     const std::optional<xla::CliqueIds>&,
                                     absl::Span<const DeviceRank> ranks, const Config&) {
-    int flag = 0;
-    MPI_Is_thread_main(&flag);
-    if (!flag) {
-        return absl::UnknownError(
-            "MPI: Communicator requested from a thread that is not the one MPI "
-            "was initialized from. Multiple threads/devices per process are not "
-            "yet supported.");
+    // this project defaults to
+    // MULTIPLE instead (see Mpi::Init() in this file), so the restriction is
+    // now conditional rather than absolute.
+    int provided = 0;
+    MPI_Query_thread(&provided);
+    if (provided < MPI_THREAD_MULTIPLE) {
+        int flag = 0;
+        MPI_Is_thread_main(&flag);
+        if (!flag) {
+            return absl::UnknownError(
+                "MPI: Communicator requested from a thread that is not the one MPI "
+                "was initialized from, and MPI_THREAD_MULTIPLE was not provided. "
+                "Concurrent collective dispatch is unsafe on this MPI build.");
+        }
     }
+
+    if (clique_key.num_devices() == 0) {
+        return absl::InvalidArgumentError("MpiCollectives::CreateCommunicators: empty clique");
+    }
+    std::vector<int> group_ranks;
+    group_ranks.reserve(clique_key.devices().size());
+    for (xla::GlobalDeviceId id : clique_key.devices()) {
+        group_ranks.push_back(static_cast<int>(id.value()));
+    }
+
+    absl::StatusOr<MPI_Comm> comm = CreateSubComm(std::move(group_ranks), /*tag=*/0);
+    if (!comm.ok()) return comm.status();
 
     std::vector<std::unique_ptr<xla::Communicator>> communicators;
     communicators.reserve(ranks.size());
-    for (const DeviceRank& device_rank : ranks) {
-        size_t rank = device_rank.rank.value();
-        int color;
-        int key = 0;
-        if (clique_key.num_devices() > 0) {
-            color = static_cast<int>(clique_key.devices().at(0).value());
-            key = static_cast<int>(rank);
-        } else {
-            color = MPI_UNDEFINED;
-        }
-        communicators.push_back(std::make_unique<MpiCommunicator>(color, key));
+    for (size_t i = 0; i < ranks.size(); ++i) {
+        communicators.push_back(std::make_unique<MpiCommunicator>(*comm));
     }
     return communicators;
 }

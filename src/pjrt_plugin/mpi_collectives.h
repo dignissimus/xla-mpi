@@ -30,7 +30,7 @@ absl::Status MpiErrorToAbslStatus(int error);
 
 class MpiCommunicator : public xla::Communicator {
 public:
-    MpiCommunicator(int color, int key);
+    explicit MpiCommunicator(MPI_Comm comm);
     ~MpiCommunicator() override;
 
     xla::Future<> AllReduce(::stream_executor::DeviceAddressBase send_buffer,
