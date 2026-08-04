@@ -1,11 +1,14 @@
 #include "pjrt_plugin/mpi_executable.h"
 #include "pjrt_plugin/mpi_collectives.h"
+#include "pjrt_plugin/mpi_collectives_async.h"
+#include "pjrt_plugin/mpi_process_group.h"
 
 #include <mpi.h>
 
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,11 +16,17 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "stablehlo/dialect/StablehloOps.h"
+#include "tsl/platform/logging.h"
 #include "xla/client/client_library.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -46,6 +55,187 @@ constexpr char kDeviceMemoryKind[] = "device";
 
 PJRT_Buffer_Type MlirElementTypeToPjrtType(mlir::Type type) {
     return pjrt::ConvertToPjRtBufferType(xla::ConvertMlirTypeToPrimitiveType(type));
+}
+
+struct ProgramInfo {
+    int64_t num_replicas = 1;
+    int64_t num_partitions = 1;
+    std::vector<int64_t> device_assignment_flat;  // [replica * num_partitions + partition]
+
+    int64_t my_rank = 0;
+    int64_t my_replica = 0;
+    int64_t my_partition = 0;
+};
+
+std::optional<xla::ReductionKind> MatchReductionBody(mlir::Region& body) {
+    if (!body.hasOneBlock()) return std::nullopt;
+    mlir::Block& block = body.front();
+    if (block.getNumArguments() != 2) return std::nullopt;
+
+    auto return_op = mlir::dyn_cast_or_null<mlir::stablehlo::ReturnOp>(block.getTerminator());
+    if (!return_op || return_op.getNumOperands() != 1) return std::nullopt;
+
+    mlir::Operation* reduce_op = return_op.getOperand(0).getDefiningOp();
+    if (!reduce_op || reduce_op->getBlock() != &block) return std::nullopt;
+
+    llvm::SmallPtrSet<mlir::Value, 2> args = {block.getArgument(0), block.getArgument(1)};
+    auto uses_both_args = [&](mlir::Value lhs, mlir::Value rhs) {
+        return args.contains(lhs) && args.contains(rhs);
+    };
+
+    if (auto op = mlir::dyn_cast<mlir::stablehlo::AddOp>(reduce_op)) {
+        if (uses_both_args(op.getLhs(), op.getRhs())) return xla::ReductionKind::SUM;
+    } else if (auto op = mlir::dyn_cast<mlir::stablehlo::MulOp>(reduce_op)) {
+        if (uses_both_args(op.getLhs(), op.getRhs())) return xla::ReductionKind::PRODUCT;
+    } else if (auto op = mlir::dyn_cast<mlir::stablehlo::MinOp>(reduce_op)) {
+        if (uses_both_args(op.getLhs(), op.getRhs())) return xla::ReductionKind::MIN;
+    } else if (auto op = mlir::dyn_cast<mlir::stablehlo::MaxOp>(reduce_op)) {
+        if (uses_both_args(op.getLhs(), op.getRhs())) return xla::ReductionKind::MAX;
+    }
+    return std::nullopt;
+}
+
+std::optional<xla::ReductionKind> MatchReductionBodyOrWarn(mlir::Region& body,
+                                                            const char* match_fn_name) {
+    std::optional<xla::ReductionKind> kind = MatchReductionBody(body);
+    if (!kind) {
+        LOG(WARNING) << match_fn_name
+                     << ": reduction body is not a plain SUM/PRODUCT/MIN/MAX over both block "
+                        "arguments, which xampi does not support for async operations, so will "
+                        "use synchronous communication.";
+    }
+    return kind;
+}
+
+mlir::NamedAttribute MakeRequestBufferAttr(mlir::OpBuilder& builder) {
+    auto* buffer = new MpiRequestBuffer();
+    return builder.getNamedAttr("request_buffer",
+                                builder.getI64IntegerAttr(reinterpret_cast<int64_t>(buffer)));
+}
+
+ProcessGroupStrategy ResolveReplicaFamilyStrategy(int64_t channel_id, bool use_global_device_ids) {
+    if (channel_id <= 0) return ProcessGroupStrategy::kCrossReplica;
+    return use_global_device_ids ? ProcessGroupStrategy::kFlattenedIds
+                                 : ProcessGroupStrategy::kCrossReplicaAndPartition;
+}
+
+int64_t GetChannelId(std::optional<mlir::stablehlo::ChannelHandleAttr> channel_handle) {
+    return channel_handle.has_value() ? channel_handle->getHandle() : 0;
+}
+
+bool AppendProcessGroupAttrs(mlir::OpBuilder& builder, mlir::Attribute groups_attr,
+                             ProcessGroupStrategy strategy, const ProgramInfo& program_info,
+                             llvm::SmallVectorImpl<mlir::NamedAttribute>& attrs) {
+    auto groups = mlir::dyn_cast<mlir::DenseIntElementsAttr>(groups_attr);
+    if (!groups) return false;
+
+    auto device_assignment_type = mlir::RankedTensorType::get(
+        {static_cast<int64_t>(program_info.device_assignment_flat.size())}, builder.getI64Type());
+    mlir::Attribute device_assignment_attr =
+        mlir::DenseElementsAttr::get(device_assignment_type, llvm::ArrayRef<int64_t>(
+                                                                  program_info.device_assignment_flat));
+
+    int64_t num_groups = groups.getType().getShape()[0];
+    attrs.push_back(builder.getNamedAttr("groups", groups));
+    attrs.push_back(builder.getNamedAttr("num_groups", builder.getI64IntegerAttr(num_groups)));
+    attrs.push_back(builder.getNamedAttr(
+        "process_group_strategy", builder.getI32IntegerAttr(static_cast<int32_t>(strategy))));
+    attrs.push_back(builder.getNamedAttr("num_partitions",
+                                        builder.getI64IntegerAttr(program_info.num_partitions)));
+    attrs.push_back(builder.getNamedAttr("device_assignment", device_assignment_attr));
+    attrs.push_back(
+        builder.getNamedAttr("my_replica", builder.getI64IntegerAttr(program_info.my_replica)));
+    attrs.push_back(
+        builder.getNamedAttr("my_partition", builder.getI64IntegerAttr(program_info.my_partition)));
+    return true;
+}
+
+bool IsPlainDenseGroups(mlir::Attribute attr, const char* match_fn_name) {
+    if (mlir::isa<mlir::DenseIntElementsAttr>(attr)) return true;
+    LOG(WARNING) << match_fn_name
+                 << ": replica_groups/source_target_pairs is not a plain "
+                    "DenseIntElementsAttr, likely Shardy mesh-axes form, which "
+                    "xampi does not support for async operations, so will use "
+                    "synchronous communication.";
+    return false;
+}
+
+std::optional<xla::ReductionKind> MatchAllReduceForAsyncRewrite(mlir::stablehlo::AllReduceOp op) {
+    if (!IsPlainDenseGroups(op.getReplicaGroups(), "MatchAllReduceForAsyncRewrite")) return std::nullopt;
+    return MatchReductionBodyOrWarn(op.getComputation(), "MatchAllReduceForAsyncRewrite");
+}
+
+// TODO: Currently splits the multi-operand form into independent segments.
+// Consider if it's ever beneficial to group them and use MPI_WaitAll
+void RewriteAsAsyncAllReduce(mlir::stablehlo::AllReduceOp op, xla::ReductionKind reduction_kind,
+                             const ProgramInfo& program_info, int32_t& next_group_tag) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolveReplicaFamilyStrategy(channel_id, op.getUseGlobalDeviceIds());
+
+    for (unsigned i = 0; i < op.getOperands().size(); ++i) {
+        mlir::Value operand = op.getOperands()[i];
+        mlir::Type result_type = op.getResult(i).getType();
+        mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+        llvm::SmallVector<mlir::NamedAttribute, 9> config_attrs = {
+            builder.getNamedAttr("reduction_kind",
+                                builder.getI32IntegerAttr(static_cast<int32_t>(reduction_kind))),
+            builder.getNamedAttr("group_tag", builder.getI32IntegerAttr(next_group_tag++)),
+            request_buffer,
+        };
+        if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
+                                    config_attrs)) {
+            LOG(FATAL) << "MatchAllReduceForAsyncRewrite verified replica_groups is "
+                          "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                          "such.";
+        }
+        auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+        llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.allreduce_start")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("backend_config", backend_config),
+        };
+        auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{operand}, start_attrs);
+
+        auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+            context, /*outputTupleIndices=*/{}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+        llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.allreduce_done")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+            builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+        };
+        auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+        op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
+    }
+    op.erase();
+}
+
+void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& program_info) {
+    int32_t next_group_tag = 0;
+
+    llvm::SmallVector<std::pair<mlir::stablehlo::AllReduceOp, xla::ReductionKind>> all_reduce_rewrites;
+    entry.walk([&](mlir::stablehlo::AllReduceOp op) {
+        if (std::optional<xla::ReductionKind> kind = MatchAllReduceForAsyncRewrite(op)) {
+            all_reduce_rewrites.push_back({op, *kind});
+        }
+    });
+    for (auto& [op, kind] : all_reduce_rewrites) {
+        RewriteAsAsyncAllReduce(op, kind, program_info, next_group_tag);
+    }
 }
 
 mlir::func::FuncOp FindEntryFunction(mlir::ModuleOp module) {
@@ -89,6 +279,59 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
         return exe;
     }
     mlir::Block& block = entry.getBody().front();
+
+    xla::ExecutableBuildOptions build_options;
+    if (compile_options != nullptr && compile_options_size > 0) {
+        xla::CompileOptionsProto proto;
+        if (!proto.ParseFromArray(compile_options, static_cast<int>(compile_options_size))) {
+            exe->error_ = "Failed to parse CompileOptionsProto";
+            return exe;
+        }
+        absl::StatusOr<xla::CompileOptions> parsed_options = xla::CompileOptions::FromProto(proto);
+        if (!parsed_options.ok()) {
+            exe->error_ =
+                "Failed to convert CompileOptionsProto: " + std::string(parsed_options.status().message());
+            return exe;
+        }
+        build_options = parsed_options->executable_build_options;
+    }
+
+    exe->num_replicas_ = build_options.num_replicas();
+    exe->num_partitions_ = build_options.num_partitions();
+    if (!build_options.has_device_assignment()) {
+        exe->error_ = "MpiExecutable::Create: compile options must include a device assignment";
+        return exe;
+    }
+    exe->device_assignment_ = build_options.device_assignment();
+
+    ProgramInfo program_info;
+    program_info.num_replicas = exe->num_replicas_;
+    program_info.num_partitions = exe->num_partitions_;
+    program_info.device_assignment_flat.reserve(
+        static_cast<size_t>(exe->num_replicas_ * exe->num_partitions_));
+    for (int64_t r = 0; r < exe->num_replicas_; ++r) {
+        for (int64_t p = 0; p < exe->num_partitions_; ++p) {
+            program_info.device_assignment_flat.push_back(exe->device_assignment_(r, p));
+        }
+    }
+
+    int my_rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+    program_info.my_rank = my_rank;
+    program_info.my_replica = -1;
+    program_info.my_partition = -1;
+    for (int64_t r = 0; r < exe->num_replicas_ && program_info.my_replica < 0; ++r) {
+        for (int64_t p = 0; p < exe->num_partitions_; ++p) {
+            int64_t idx = r * exe->num_partitions_ + p;
+            if (program_info.device_assignment_flat[idx] == my_rank) {
+                program_info.my_replica = r;
+                program_info.my_partition = p;
+                break;
+            }
+        }
+    }
+
+    RewriteCollectivesAsAsync(entry, program_info);
 
     mlir::func::ReturnOp return_op;
     for (mlir::Operation& op : block) {
@@ -150,22 +393,6 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
     argument_layouts.reserve(input_shapes.size());
     for (const xla::Shape& shape : input_shapes) argument_layouts.push_back(&shape);
 
-    xla::ExecutableBuildOptions build_options;
-    if (compile_options != nullptr && compile_options_size > 0) {
-        xla::CompileOptionsProto proto;
-        if (!proto.ParseFromArray(compile_options, static_cast<int>(compile_options_size))) {
-            exe->error_ = "Failed to parse CompileOptionsProto";
-            return exe;
-        }
-        absl::StatusOr<xla::CompileOptions> parsed_options = xla::CompileOptions::FromProto(proto);
-        if (!parsed_options.ok()) {
-            exe->error_ =
-                "Failed to convert CompileOptionsProto: " + std::string(parsed_options.status().message());
-            return exe;
-        }
-        build_options = parsed_options->executable_build_options;
-    }
-
     absl::StatusOr<std::vector<std::unique_ptr<xla::LocalExecutable>>> executables =
         (*client_or)->Compile(computation, argument_layouts, build_options);
     if (!executables.ok()) {
@@ -180,14 +407,6 @@ std::shared_ptr<MpiExecutable> MpiExecutable::Create(const std::string& format, 
 
     exe->executable_ = std::move((*executables)[0]);
     exe->client_ = *client_or;
-
-    exe->num_replicas_ = build_options.num_replicas();
-    exe->num_partitions_ = build_options.num_partitions();
-    if (!build_options.has_device_assignment()) {
-        exe->error_ = "MpiExecutable::Create: compile options must include a device assignment";
-        return exe;
-    }
-    exe->device_assignment_ = build_options.device_assignment();
 
     for (const OutputInfo& info : exe->output_info_) {
         exe->output_types_.push_back(static_cast<PJRT_Buffer_Type>(info.dtype));

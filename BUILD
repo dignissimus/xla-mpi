@@ -61,6 +61,7 @@ cc_binary(
         "@xla//xla/service/cpu:cpu_transfer_manager",
         "@xla//xla/service/cpu:cpu_compiler",
         "@xla//xla/backends/cpu:alignment",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@xla//xla/stream_executor:device_address",
         "@xla//xla/stream_executor/host:host_platform",
@@ -71,5 +72,6 @@ cc_binary(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@@xla++third_party_ext+stablehlo//:stablehlo_ops",
     ],
 )
