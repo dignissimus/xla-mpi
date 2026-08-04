@@ -127,6 +127,75 @@ absl::Status ReduceScatterDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyB
     return reinterpret_cast<MpiReduceScatterRequestBuffer*>(request_buffer)->MpiWait(recv_buffer, result);
 }
 
+struct ResizedBlockTypes {
+    MPI_Datatype block_type;
+    MPI_Datatype resized_type;
+};
+
+absl::StatusOr<ResizedBlockTypes> BuildResizedBlockType(
+    absl::Span<const int64_t> container_sizes, absl::Span<const int64_t> unit_sizes, int64_t dim,
+    MPI_Datatype elem_type, size_t elem_byte_size) {
+    int ndims = static_cast<int>(container_sizes.size());
+    if (static_cast<int64_t>(unit_sizes.size()) != ndims || dim < 0 || dim >= ndims) {
+        return absl::InvalidArgumentError("BuildResizedBlockType: shape/dim mismatch");
+    }
+    std::vector<int> container(container_sizes.begin(), container_sizes.end());
+    std::vector<int> unit(unit_sizes.begin(), unit_sizes.end());
+    std::vector<int> starts(ndims, 0);
+
+    MPI_Datatype block_type;
+    MPI_Type_create_subarray(ndims, container.data(), unit.data(), starts.data(), MPI_ORDER_C, elem_type,
+                             &block_type);
+    MPI_Type_commit(&block_type);
+
+    int64_t stride_elems = 1;
+    for (int64_t d = dim + 1; d < ndims; ++d) stride_elems *= container_sizes[d];
+    auto extent = static_cast<MPI_Aint>(unit_sizes[dim] * stride_elems * elem_byte_size);
+
+    MPI_Datatype resized_type;
+    MPI_Type_create_resized(block_type, /*lb=*/0, extent, &resized_type);
+    MPI_Type_commit(&resized_type);
+
+    return ResizedBlockTypes{block_type, resized_type};
+}
+
+absl::Status AllGatherStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,
+                            int64_t all_gather_dim, int32_t group_tag, absl::Span<const int64_t> groups,
+                            int64_t num_groups, int32_t process_group_strategy, int64_t num_partitions,
+                            absl::Span<const int64_t> device_assignment, int64_t my_replica,
+                            int64_t my_partition, int64_t request_buffer) {
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(input.element_type());
+    if (!type.ok()) return type.status();
+    absl::StatusOr<MPI_Comm> comm =
+        ResolveGroupComm(groups, num_groups, process_group_strategy, num_partitions,
+                         device_assignment, my_replica, my_partition, group_tag);
+    if (!comm.ok()) return comm.status();
+
+    size_t elem_size = input.size_bytes() / input.element_count();
+    absl::StatusOr<ResizedBlockTypes> block_types = BuildResizedBlockType(
+        recv->dimensions(), input.dimensions(), all_gather_dim, *type, elem_size);
+    if (!block_types.ok()) return block_types.status();
+
+    std::vector<MPI_Datatype> types = {block_types->block_type, block_types->resized_type};
+    std::vector<MPI_Request> requests(1);
+    absl::Status status = MpiErrorToAbslStatus(
+        MPI_Iallgather(input.untyped_data(), input.element_count(), *type, recv->untyped_data(), 1,
+                      block_types->resized_type, *comm, &requests[0]));
+    if (!status.ok()) {
+        for (MPI_Datatype t : types) MPI_Type_free(&t);
+        if (*comm != MPI_COMM_WORLD) MPI_Comm_free(&*comm);
+        return status;
+    }
+    reinterpret_cast<MpiRequestBuffer*>(request_buffer)->Store(std::move(requests), std::move(types), *comm);
+    return absl::OkStatus();
+}
+
+absl::Status AllGatherDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
+                          int64_t request_buffer) {
+    (void)recv_buffer;
+    return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
+}
+
 XLA_FFI_DEFINE_HANDLER(kAllReduceStart, AllReduceStart,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
@@ -171,12 +240,35 @@ XLA_FFI_DEFINE_HANDLER(kReduceScatterDone, ReduceScatterDone,
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
 
+XLA_FFI_DEFINE_HANDLER(kAllGatherStart, AllGatherStart,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Attr<int64_t>("all_gather_dim")
+                           .Attr<int32_t>("group_tag")
+                           .Attr<absl::Span<const int64_t>>("groups")
+                           .Attr<int64_t>("num_groups")
+                           .Attr<int32_t>("process_group_strategy")
+                           .Attr<int64_t>("num_partitions")
+                           .Attr<absl::Span<const int64_t>>("device_assignment")
+                           .Attr<int64_t>("my_replica")
+                           .Attr<int64_t>("my_partition")
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_DEFINE_HANDLER(kAllGatherDone, AllGatherDone,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Attr<int64_t>("request_buffer"));
+
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allreduce_start", "Host", kAllReduceStart);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allreduce_done", "Host", kAllReduceDone);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.reduce_scatter_start", "Host",
                          kReduceScatterStart);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.reduce_scatter_done", "Host",
                          kReduceScatterDone);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allgather_start", "Host", kAllGatherStart);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allgather_done", "Host", kAllGatherDone);
 
 }  // namespace
 

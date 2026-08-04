@@ -129,10 +129,16 @@ xla::Future<> MpiCommunicator::AllToAll(
     return xla::Unimplemented("AllToAll is not implemented");
 }
 
-xla::Future<> MpiCommunicator::AllGather(::stream_executor::DeviceAddressBase,
-                                         ::stream_executor::DeviceAddressBase,
-                                         xla::PrimitiveType, size_t, const Executor&) {
-    return xla::Unimplemented("AllGather is not implemented");
+xla::Future<> MpiCommunicator::AllGather(::stream_executor::DeviceAddressBase send_buffer,
+                                         ::stream_executor::DeviceAddressBase recv_buffer,
+                                         xla::PrimitiveType dtype, size_t count,
+                                         const Executor& executor) {
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(dtype);
+    if (!type.ok()) return type.status();
+    absl::Status status = MpiErrorToAbslStatus(
+        MPI_Allgather(send_buffer.opaque(), count, *type, recv_buffer.opaque(), count, *type, comm_));
+    if (!status.ok()) return status;
+    return absl::OkStatus();
 }
 
 xla::Future<> MpiCommunicator::ReduceScatter(::stream_executor::DeviceAddressBase send_buffer,

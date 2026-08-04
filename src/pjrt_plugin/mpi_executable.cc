@@ -297,6 +297,72 @@ void RewriteAsAsyncReduceScatter(mlir::stablehlo::ReduceScatterOp op, xla::Reduc
     op.erase();
 }
 
+bool MatchAllGatherForAsyncRewrite(mlir::stablehlo::AllGatherOp op) {
+    return IsPlainDenseGroups(op.getReplicaGroups(), "MatchAllGatherForAsyncRewrite");
+}
+
+// Same shape as RewriteAsAsyncAllReduce, targeting xla_mpi.allgather_start/
+// done instead; no reduction kind involved, but threads all_gather_dim
+// through for the same reason ReduceScatter threads scatter_dimension.
+//
+// TODO: Currently splits the multi-operand form into independent segments.
+// Consider if it's ever beneficial to group them and use MPI_WaitAll
+void RewriteAsAsyncAllGather(mlir::stablehlo::AllGatherOp op, const ProgramInfo& program_info,
+                             int32_t& next_group_tag) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolveReplicaFamilyStrategy(channel_id, op.getUseGlobalDeviceIds());
+
+    for (unsigned i = 0; i < op.getOperands().size(); ++i) {
+        mlir::Value operand = op.getOperands()[i];
+        mlir::Type result_type = op.getResult(i).getType();
+        mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+        llvm::SmallVector<mlir::NamedAttribute, 9> config_attrs = {
+            builder.getNamedAttr("all_gather_dim", builder.getI64IntegerAttr(op.getAllGatherDim())),
+            builder.getNamedAttr("group_tag", builder.getI32IntegerAttr(next_group_tag++)),
+            request_buffer,
+        };
+        if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
+                                    /*include_my_rank=*/false, config_attrs)) {
+            LOG(FATAL) << "MatchAllGatherForAsyncRewrite verified replica_groups is "
+                          "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                          "such.";
+        }
+        auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+        llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.allgather_start")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("backend_config", backend_config),
+        };
+        auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{operand}, start_attrs);
+
+        auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+            context, /*outputTupleIndices=*/{}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+        llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.allgather_done")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+            builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+        };
+        auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+        op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
+    }
+    op.erase();
+}
+
 void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& program_info) {
     int32_t next_group_tag = 0;
 
@@ -319,6 +385,14 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
     });
     for (auto& [op, kind] : reduce_scatter_rewrites) {
         RewriteAsAsyncReduceScatter(op, kind, program_info, next_group_tag++);
+    }
+
+    llvm::SmallVector<mlir::stablehlo::AllGatherOp> all_gather_rewrites;
+    entry.walk([&](mlir::stablehlo::AllGatherOp op) {
+        if (MatchAllGatherForAsyncRewrite(op)) all_gather_rewrites.push_back(op);
+    });
+    for (mlir::stablehlo::AllGatherOp op : all_gather_rewrites) {
+        RewriteAsAsyncAllGather(op, program_info, next_group_tag);
     }
 }
 
