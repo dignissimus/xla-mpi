@@ -1,6 +1,7 @@
 #include "pjrt_plugin/mpi_collectives.h"
 
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
+#include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -113,13 +115,48 @@ xla::Future<> MpiCommunicator::AllReduce(::stream_executor::DeviceAddressBase se
     return absl::OkStatus();
 }
 
-xla::Future<> MpiCommunicator::CollectivePermute(::stream_executor::DeviceAddressBase,
-                                                  ::stream_executor::DeviceAddressBase,
-                                                  xla::PrimitiveType, size_t,
-                                                  std::optional<xla::RankId>,
-                                                  absl::Span<const xla::RankId>,
-                                                  const Executor&) {
-    return xla::Unimplemented("CollectivePermute is not implemented");
+xla::Future<> MpiCommunicator::CollectivePermute(::stream_executor::DeviceAddressBase send_buffer,
+                                                  ::stream_executor::DeviceAddressBase recv_buffer,
+                                                  xla::PrimitiveType dtype, size_t count,
+                                                  std::optional<xla::RankId> source_rank,
+                                                  absl::Span<const xla::RankId> target_ranks,
+                                                  const Executor& executor) {
+    // TODO: Check if it's OK to use 0 as a tag. Rationale is that there is
+    // only one CollectivePermute at a time, but unsure if this is true
+    int tag = 0;
+    const int rank = mpi_rank_;
+    size_t num_bytes = count * xla::primitive_util::ByteWidth(dtype);
+    std::vector<MPI_Request> requests;
+
+    if (source_rank) {
+        if (source_rank->value() == rank) {
+            std::memcpy(recv_buffer.opaque(), send_buffer.opaque(), num_bytes);
+        } else {
+            requests.emplace_back();
+            absl::Status status = MpiErrorToAbslStatus(
+                MPI_Irecv(recv_buffer.opaque(), num_bytes, MPI_BYTE, source_rank->value(), tag, comm_,
+                         &requests.back()));
+            if (!status.ok()) return status;
+        }
+    } else {
+        std::memset(recv_buffer.opaque(), 0, num_bytes);
+    }
+
+    for (xla::RankId target : target_ranks) {
+        if (target.value() != rank) {
+            requests.emplace_back();
+            absl::Status status = MpiErrorToAbslStatus(
+                MPI_Isend(send_buffer.opaque(), num_bytes, MPI_BYTE, target.value(), tag, comm_,
+                         &requests.back()));
+            if (!status.ok()) return status;
+        }
+    }
+
+    for (auto& request : requests) {
+        absl::Status status = MpiErrorToAbslStatus(MPI_Wait(&request, MPI_STATUS_IGNORE));
+        if (!status.ok()) return status;
+    }
+    return absl::OkStatus();
 }
 
 xla::Future<> MpiCommunicator::AllToAll(

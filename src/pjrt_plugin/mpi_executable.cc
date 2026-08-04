@@ -125,13 +125,21 @@ ProcessGroupStrategy ResolveReplicaFamilyStrategy(int64_t channel_id, bool use_g
                                  : ProcessGroupStrategy::kCrossReplicaAndPartition;
 }
 
+// channel_id <= 0 selects kCrossReplica, otherwise kCrossPartition -- for
+// ops that only carry channel_handle, not use_global_device_ids
+// (CollectivePermute/AllToAll/Send/Recv) -- see spec.md's "cross_partition"
+// section.
+ProcessGroupStrategy ResolvePermuteFamilyStrategy(int64_t channel_id) {
+    return channel_id <= 0 ? ProcessGroupStrategy::kCrossReplica : ProcessGroupStrategy::kCrossPartition;
+}
+
 int64_t GetChannelId(std::optional<mlir::stablehlo::ChannelHandleAttr> channel_handle) {
     return channel_handle.has_value() ? channel_handle->getHandle() : 0;
 }
 
 bool AppendProcessGroupAttrs(mlir::OpBuilder& builder, mlir::Attribute groups_attr,
                              ProcessGroupStrategy strategy, const ProgramInfo& program_info,
-                             bool include_my_rank,
+                             bool include_group_metadata, bool include_my_rank,
                              llvm::SmallVectorImpl<mlir::NamedAttribute>& attrs) {
     auto groups = mlir::dyn_cast<mlir::DenseIntElementsAttr>(groups_attr);
     if (!groups) return false;
@@ -142,9 +150,11 @@ bool AppendProcessGroupAttrs(mlir::OpBuilder& builder, mlir::Attribute groups_at
         mlir::DenseElementsAttr::get(device_assignment_type, llvm::ArrayRef<int64_t>(
                                                                   program_info.device_assignment_flat));
 
-    int64_t num_groups = groups.getType().getShape()[0];
     attrs.push_back(builder.getNamedAttr("groups", groups));
-    attrs.push_back(builder.getNamedAttr("num_groups", builder.getI64IntegerAttr(num_groups)));
+    if (include_group_metadata) {
+        int64_t num_groups = groups.getType().getShape()[0];
+        attrs.push_back(builder.getNamedAttr("num_groups", builder.getI64IntegerAttr(num_groups)));
+    }
     attrs.push_back(builder.getNamedAttr(
         "process_group_strategy", builder.getI32IntegerAttr(static_cast<int32_t>(strategy))));
     attrs.push_back(builder.getNamedAttr("num_partitions",
@@ -202,7 +212,8 @@ void RewriteAsAsyncAllReduce(mlir::stablehlo::AllReduceOp op, xla::ReductionKind
             request_buffer,
         };
         if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
-                                    /*include_my_rank=*/false, config_attrs)) {
+                                    /*include_group_metadata=*/true, /*include_my_rank=*/false,
+                                    config_attrs)) {
             LOG(FATAL) << "MatchAllReduceForAsyncRewrite verified replica_groups is "
                           "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
                           "such.";
@@ -264,7 +275,8 @@ void RewriteAsAsyncReduceScatter(mlir::stablehlo::ReduceScatterOp op, xla::Reduc
         request_buffer,
     };
     if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
-                                /*include_my_rank=*/true, config_attrs)) {
+                                /*include_group_metadata=*/true, /*include_my_rank=*/true,
+                                config_attrs)) {
         LOG(FATAL) << "MatchReduceScatterForAsyncRewrite verified replica_groups is "
                       "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
                       "such.";
@@ -330,7 +342,8 @@ void RewriteAsAsyncAllGather(mlir::stablehlo::AllGatherOp op, const ProgramInfo&
             request_buffer,
         };
         if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
-                                    /*include_my_rank=*/false, config_attrs)) {
+                                    /*include_group_metadata=*/true, /*include_my_rank=*/false,
+                                    config_attrs)) {
             LOG(FATAL) << "MatchAllGatherForAsyncRewrite verified replica_groups is "
                           "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
                           "such.";
@@ -360,6 +373,62 @@ void RewriteAsAsyncAllGather(mlir::stablehlo::AllGatherOp op, const ProgramInfo&
 
         op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
     }
+    op.erase();
+}
+
+bool MatchCollectivePermuteForAsyncRewrite(mlir::stablehlo::CollectivePermuteOp) { return true; }
+
+void RewriteAsAsyncCollectivePermute(mlir::stablehlo::CollectivePermuteOp op,
+                                     const ProgramInfo& program_info) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    mlir::Value operand = op.getOperand();
+    mlir::Type result_type = op.getResult().getType();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolvePermuteFamilyStrategy(channel_id);
+    mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+    llvm::SmallVector<mlir::NamedAttribute, 8> config_attrs = {request_buffer};
+    if (!AppendProcessGroupAttrs(builder, op.getSourceTargetPairs(), strategy, program_info,
+                                /*include_group_metadata=*/false, /*include_my_rank=*/true,
+                                config_attrs)) {
+        LOG(FATAL) << "MatchCollectivePermuteForAsyncRewrite verified source_target_pairs is "
+                      "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                      "such.";
+    }
+    auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+    llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+        builder.getNamedAttr("call_target_name",
+                            builder.getStringAttr("xla_mpi.collective_permute_start")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("backend_config", backend_config),
+    };
+    auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{operand}, start_attrs);
+
+    // recv_buffer is Done's sole operand -- Done's sole result aliases it.
+    auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+        context, /*outputTupleIndices=*/{}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+    llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+        builder.getNamedAttr("call_target_name",
+                            builder.getStringAttr("xla_mpi.collective_permute_done")),
+        builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+        builder.getNamedAttr("api_version", api_version),
+        builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+        builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+    };
+    auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+    op.getResult().replaceAllUsesWith(done_op.getResult(0));
     op.erase();
 }
 
@@ -393,6 +462,14 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
     });
     for (mlir::stablehlo::AllGatherOp op : all_gather_rewrites) {
         RewriteAsAsyncAllGather(op, program_info, next_group_tag);
+    }
+
+    llvm::SmallVector<mlir::stablehlo::CollectivePermuteOp> collective_permute_rewrites;
+    entry.walk([&](mlir::stablehlo::CollectivePermuteOp op) {
+        if (MatchCollectivePermuteForAsyncRewrite(op)) collective_permute_rewrites.push_back(op);
+    });
+    for (mlir::stablehlo::CollectivePermuteOp op : collective_permute_rewrites) {
+        RewriteAsAsyncCollectivePermute(op, program_info);
     }
 }
 

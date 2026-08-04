@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -45,6 +47,19 @@ absl::StatusOr<MPI_Comm> ResolveGroupComm(absl::Span<const int64_t> groups, int6
         num_partitions, device_assignment, my_replica, my_partition);
     if (!ranks.ok()) return ranks.status();
     return CreateSubComm(std::move(*ranks), group_tag);
+}
+
+absl::StatusOr<int> ResolvePermuteRank(ProcessGroupStrategy strategy, int64_t raw_id,
+                                       int64_t num_partitions,
+                                       absl::Span<const int64_t> device_assignment,
+                                       int64_t my_replica, int64_t my_partition) {
+    int64_t replica = strategy == ProcessGroupStrategy::kCrossPartition ? my_replica : raw_id;
+    int64_t partition = strategy == ProcessGroupStrategy::kCrossPartition ? raw_id : my_partition;
+    int64_t idx = replica * num_partitions + partition;
+    if (idx < 0 || idx >= static_cast<int64_t>(device_assignment.size())) {
+        return absl::InvalidArgumentError("ResolvePermuteRank: resolved coordinate out of range");
+    }
+    return static_cast<int>(device_assignment[idx]);
 }
 
 absl::Status AllReduceStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,
@@ -196,6 +211,68 @@ absl::Status AllGatherDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffe
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
+absl::Status CollectivePermuteStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,
+                                    absl::Span<const int64_t> groups, int32_t process_group_strategy,
+                                    int64_t num_partitions, absl::Span<const int64_t> device_assignment,
+                                    int64_t my_rank, int64_t my_replica, int64_t my_partition,
+                                    int64_t request_buffer) {
+    // TODO: Check if it's OK to use 0 as a tag. Rationale is that there is
+    // only one CollectivePermute at a time, but unsure if this is true
+    constexpr int kTag = 0;
+    size_t num_bytes = input.size_bytes();
+    auto strategy = static_cast<ProcessGroupStrategy>(process_group_strategy);
+
+    std::optional<int> source_rank;
+    std::vector<int> target_ranks;
+    for (size_t i = 0; i + 1 < groups.size(); i += 2) {
+        int64_t source_id = groups[i];
+        int64_t target_id = groups[i + 1];
+        absl::StatusOr<int> source_dev = ResolvePermuteRank(strategy, source_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        absl::StatusOr<int> target_dev = ResolvePermuteRank(strategy, target_id, num_partitions,
+                                                            device_assignment, my_replica, my_partition);
+        if (!source_dev.ok()) return source_dev.status();
+        if (!target_dev.ok()) return target_dev.status();
+        if (*target_dev == my_rank) source_rank = *source_dev;
+        if (*source_dev == my_rank) target_ranks.push_back(*target_dev);
+    }
+
+    std::vector<MPI_Request> requests;
+
+    if (source_rank) {
+        if (*source_rank == my_rank) {
+            std::memcpy(recv->untyped_data(), input.untyped_data(), num_bytes);
+        } else {
+            requests.emplace_back();
+            absl::Status status = MpiErrorToAbslStatus(
+                MPI_Irecv(recv->untyped_data(), num_bytes, MPI_BYTE, *source_rank, kTag,
+                         MPI_COMM_WORLD, &requests.back()));
+            if (!status.ok()) return status;
+        }
+    } else {
+        std::memset(recv->untyped_data(), 0, num_bytes);
+    }
+
+    for (int target : target_ranks) {
+        if (target != my_rank) {
+            requests.emplace_back();
+            absl::Status status = MpiErrorToAbslStatus(
+                MPI_Isend(input.untyped_data(), num_bytes, MPI_BYTE, target, kTag, MPI_COMM_WORLD,
+                         &requests.back()));
+            if (!status.ok()) return status;
+        }
+    }
+
+    reinterpret_cast<MpiRequestBuffer*>(request_buffer)->Store(std::move(requests));
+    return absl::OkStatus();
+}
+
+absl::Status CollectivePermuteDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
+                                   int64_t request_buffer) {
+    (void)recv_buffer;
+    return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
+}
+
 XLA_FFI_DEFINE_HANDLER(kAllReduceStart, AllReduceStart,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
@@ -261,6 +338,25 @@ XLA_FFI_DEFINE_HANDLER(kAllGatherDone, AllGatherDone,
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
 
+XLA_FFI_DEFINE_HANDLER(kCollectivePermuteStart, CollectivePermuteStart,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Attr<absl::Span<const int64_t>>("groups")
+                           .Attr<int32_t>("process_group_strategy")
+                           .Attr<int64_t>("num_partitions")
+                           .Attr<absl::Span<const int64_t>>("device_assignment")
+                           .Attr<int64_t>("my_rank")
+                           .Attr<int64_t>("my_replica")
+                           .Attr<int64_t>("my_partition")
+                           .Attr<int64_t>("request_buffer"));
+
+XLA_FFI_DEFINE_HANDLER(kCollectivePermuteDone, CollectivePermuteDone,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Attr<int64_t>("request_buffer"));
+
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allreduce_start", "Host", kAllReduceStart);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allreduce_done", "Host", kAllReduceDone);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.reduce_scatter_start", "Host",
@@ -269,6 +365,10 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.reduce_scatter_done", "Ho
                          kReduceScatterDone);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allgather_start", "Host", kAllGatherStart);
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.allgather_done", "Host", kAllGatherDone);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.collective_permute_start", "Host",
+                         kCollectivePermuteStart);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_mpi.collective_permute_done", "Host",
+                         kCollectivePermuteDone);
 
 }  // namespace
 
