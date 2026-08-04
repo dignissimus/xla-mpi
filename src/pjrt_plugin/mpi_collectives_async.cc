@@ -59,7 +59,7 @@ absl::StatusOr<int> ResolvePermuteRank(ProcessGroupStrategy strategy, int64_t ra
     if (idx < 0 || idx >= static_cast<int64_t>(device_assignment.size())) {
         return absl::InvalidArgumentError("ResolvePermuteRank: resolved coordinate out of range");
     }
-    return static_cast<int>(device_assignment[idx]);
+    return UnpackCpuProcessIndex(device_assignment[idx]);
 }
 
 absl::Status AllReduceStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,

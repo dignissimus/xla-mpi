@@ -11,6 +11,16 @@
 
 namespace xla_mpi {
 
+constexpr int64_t kMaxCpuDevicesPerProcess = 1 << 11;  // 2048
+
+inline int64_t PackCpuDeviceId(int process_id, int local_device_id = 0) {
+    return static_cast<int64_t>(process_id) * kMaxCpuDevicesPerProcess + local_device_id;
+}
+
+inline int UnpackCpuProcessIndex(int64_t global_device_id) {
+    return static_cast<int>(global_device_id / kMaxCpuDevicesPerProcess);
+}
+
 // StableHLO process groups
 enum class ProcessGroupStrategy {
     kCrossReplica,

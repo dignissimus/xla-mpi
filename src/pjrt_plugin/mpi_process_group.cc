@@ -27,7 +27,7 @@ absl::StatusOr<std::vector<int>> ResolveProcessGroupRanks(
                 absl::StrCat("ResolveProcessGroupRanks::DeviceAt: (replica=", replica,
                             ", partition=", partition, ") out of range"));
         }
-        return static_cast<int>(device_assignment[idx]);
+        return UnpackCpuProcessIndex(device_assignment[idx]);
     };
 
     auto append_rank = [&](std::vector<int>& ranks, int64_t r, int64_t p) -> absl::Status {

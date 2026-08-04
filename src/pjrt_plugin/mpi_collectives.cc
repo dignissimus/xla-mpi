@@ -321,7 +321,7 @@ MpiCollectives::CreateCommunicators(const xla::CliqueKey& clique_key,
     std::vector<int> group_ranks;
     group_ranks.reserve(clique_key.devices().size());
     for (xla::GlobalDeviceId id : clique_key.devices()) {
-        group_ranks.push_back(static_cast<int>(id.value()));
+        group_ranks.push_back(UnpackCpuProcessIndex(id.value()));
     }
 
     absl::StatusOr<MPI_Comm> comm = CreateSubComm(std::move(group_ranks), /*tag=*/0);
