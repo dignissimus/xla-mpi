@@ -160,10 +160,31 @@ xla::Future<> MpiCommunicator::CollectivePermute(::stream_executor::DeviceAddres
 }
 
 xla::Future<> MpiCommunicator::AllToAll(
-    absl::InlinedVector<::stream_executor::DeviceAddressBase, 4>,
-    absl::InlinedVector<::stream_executor::DeviceAddressBase, 4>,
-    xla::PrimitiveType, size_t, const Executor&) {
-    return xla::Unimplemented("AllToAll is not implemented");
+    absl::InlinedVector<::stream_executor::DeviceAddressBase, 4> send_buffers,
+    absl::InlinedVector<::stream_executor::DeviceAddressBase, 4> recv_buffers,
+    xla::PrimitiveType dtype, size_t count, const Executor& executor) {
+    const int rank = mpi_rank_;
+    const int size = mpi_size_;
+    if (static_cast<int>(send_buffers.size()) != size || static_cast<int>(recv_buffers.size()) != size) {
+        return absl::InvalidArgumentError("AllToAll: expected one buffer per rank");
+    }
+
+    absl::StatusOr<MPI_Datatype> type = PrimitiveTypeToMpiType(dtype);
+    if (!type.ok()) return type.status();
+    size_t chunk_bytes = count * xla::primitive_util::ByteWidth(dtype);
+
+    std::memcpy(recv_buffers[rank].opaque(), send_buffers[rank].opaque(), chunk_bytes);
+
+    for (int i = 1; i < size; ++i) {
+        int send_rank = (rank + i) % size;
+        int recv_rank = (rank + size - i) % size;
+        absl::Status status = MpiErrorToAbslStatus(MPI_Sendrecv(
+            send_buffers[send_rank].opaque(), count, *type, send_rank, /*sendtag=*/0,
+            recv_buffers[recv_rank].opaque(), count, *type, recv_rank, /*recvtag=*/0, comm_,
+            MPI_STATUS_IGNORE));
+        if (!status.ok()) return status;
+    }
+    return absl::OkStatus();
 }
 
 xla::Future<> MpiCommunicator::AllGather(::stream_executor::DeviceAddressBase send_buffer,

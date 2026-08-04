@@ -432,6 +432,69 @@ void RewriteAsAsyncCollectivePermute(mlir::stablehlo::CollectivePermuteOp op,
     op.erase();
 }
 
+bool MatchAllToAllForAsyncRewrite(mlir::stablehlo::AllToAllOp op) {
+    return IsPlainDenseGroups(op.getReplicaGroups(), "MatchAllToAllForAsyncRewrite");
+}
+
+// TODO: Currently splits the multi-operand form into independent segments.
+// Consider if it's ever beneficial to group them and use MPI_WaitAll
+void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& program_info) {
+    mlir::OpBuilder builder(op);
+    mlir::MLIRContext* context = op.getContext();
+    mlir::Location loc = op.getLoc();
+
+    auto api_version = mlir::stablehlo::CustomCallApiVersionAttr::get(
+        context, mlir::stablehlo::CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+    int64_t channel_id = GetChannelId(op.getChannelHandle());
+    ProcessGroupStrategy strategy = ResolvePermuteFamilyStrategy(channel_id);
+
+    for (unsigned i = 0; i < op.getOperands().size(); ++i) {
+        mlir::Value operand = op.getOperands()[i];
+        mlir::Type result_type = op.getResult(i).getType();
+        mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
+
+        llvm::SmallVector<mlir::NamedAttribute, 9> config_attrs = {
+            builder.getNamedAttr("split_dimension", builder.getI64IntegerAttr(op.getSplitDimension())),
+            builder.getNamedAttr("concat_dimension", builder.getI64IntegerAttr(op.getConcatDimension())),
+            builder.getNamedAttr("split_count", builder.getI64IntegerAttr(op.getSplitCount())),
+            request_buffer,
+        };
+        if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
+                                    /*include_group_metadata=*/true, /*include_my_rank=*/false,
+                                    config_attrs)) {
+            LOG(FATAL) << "MatchAllToAllForAsyncRewrite verified replica_groups is "
+                          "DenseIntElementsAttr. But AppendProcessGroupAttrs failed to match it as "
+                          "such.";
+        }
+        auto backend_config = builder.getDictionaryAttr(config_attrs);
+
+        llvm::SmallVector<mlir::NamedAttribute, 4> start_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.all_to_all_start")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("backend_config", backend_config),
+        };
+        auto start_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{operand}, start_attrs);
+
+        auto alias = mlir::stablehlo::OutputOperandAliasAttr::get(
+            context, /*outputTupleIndices=*/{}, /*operandIndex=*/0, /*operandTupleIndices=*/{});
+        llvm::SmallVector<mlir::NamedAttribute, 5> done_attrs = {
+            builder.getNamedAttr("call_target_name", builder.getStringAttr("xla_mpi.all_to_all_done")),
+            builder.getNamedAttr("has_side_effect", builder.getBoolAttr(true)),
+            builder.getNamedAttr("api_version", api_version),
+            builder.getNamedAttr("output_operand_aliases", builder.getArrayAttr({alias})),
+            builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
+        };
+        auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+
+        op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
+    }
+    op.erase();
+}
+
 void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& program_info) {
     int32_t next_group_tag = 0;
 
@@ -471,6 +534,12 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
     for (mlir::stablehlo::CollectivePermuteOp op : collective_permute_rewrites) {
         RewriteAsAsyncCollectivePermute(op, program_info);
     }
+
+    llvm::SmallVector<mlir::stablehlo::AllToAllOp> all_to_all_rewrites;
+    entry.walk([&](mlir::stablehlo::AllToAllOp op) {
+        if (MatchAllToAllForAsyncRewrite(op)) all_to_all_rewrites.push_back(op);
+    });
+    for (mlir::stablehlo::AllToAllOp op : all_to_all_rewrites) RewriteAsAsyncAllToAll(op, program_info);
 }
 
 mlir::func::FuncOp FindEntryFunction(mlir::ModuleOp module) {
