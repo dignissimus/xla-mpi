@@ -192,7 +192,8 @@ void RewriteAsAsyncAllReduce(mlir::stablehlo::AllReduceOp op, xla::ReductionKind
             builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
         };
         auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0), operand},
+            done_attrs);
 
         op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
     }
@@ -257,7 +258,8 @@ void RewriteAsAsyncReduceScatter(mlir::stablehlo::ReduceScatterOp op, xla::Reduc
         builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
     };
     auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0), operand},
+        done_attrs);
 
     op.getResult().replaceAllUsesWith(done_op.getResult(0));
     op.erase();
@@ -321,7 +323,8 @@ void RewriteAsAsyncAllGather(mlir::stablehlo::AllGatherOp op, const ProgramInfo&
             builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
         };
         auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0), operand},
+            done_attrs);
 
         op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
     }
@@ -381,7 +384,8 @@ void RewriteAsAsyncCollectivePermute(mlir::stablehlo::CollectivePermuteOp op,
         builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
     };
     auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+        loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0), operand},
+        done_attrs);
 
     op.getResult().replaceAllUsesWith(done_op.getResult(0));
     op.erase();
@@ -447,7 +451,8 @@ void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& p
             builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
         };
         auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+            loc, mlir::TypeRange{result_type}, mlir::ValueRange{start_op.getResult(0), operand},
+            done_attrs);
 
         op.getResult(i).replaceAllUsesWith(done_op.getResult(0));
     }
@@ -516,7 +521,7 @@ void RewriteAsAsyncSend(mlir::stablehlo::SendOp op, const ProgramInfo& program_i
         builder.getNamedAttr("backend_config", builder.getDictionaryAttr({request_buffer})),
     };
     auto done_op = builder.create<mlir::stablehlo::CustomCallOp>(
-        loc, mlir::TypeRange{token_type}, mlir::ValueRange{start_op.getResult(0)}, done_attrs);
+        loc, mlir::TypeRange{token_type}, mlir::ValueRange{operand, start_op.getResult(0)}, done_attrs);
 
     op.getResult().replaceAllUsesWith(done_op.getResult(0));
     op.erase();

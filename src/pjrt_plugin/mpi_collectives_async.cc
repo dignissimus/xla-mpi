@@ -91,9 +91,10 @@ absl::Status AllReduceStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> re
     return absl::OkStatus();
 }
 
-absl::Status AllReduceDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
-                          int64_t request_buffer) {
+absl::Status AllReduceDone(ffi::AnyBuffer recv_buffer, ffi::AnyBuffer send_echo,
+                          ffi::Result<ffi::AnyBuffer> result, int64_t request_buffer) {
     (void)recv_buffer;
+    (void)send_echo;
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
@@ -137,8 +138,9 @@ absl::Status ReduceScatterStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer
     return absl::OkStatus();
 }
 
-absl::Status ReduceScatterDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
-                               int64_t request_buffer) {
+absl::Status ReduceScatterDone(ffi::AnyBuffer recv_buffer, ffi::AnyBuffer send_echo,
+                               ffi::Result<ffi::AnyBuffer> result, int64_t request_buffer) {
+    (void)send_echo;
     return reinterpret_cast<MpiReduceScatterRequestBuffer*>(request_buffer)->MpiWait(recv_buffer, result);
 }
 
@@ -205,9 +207,10 @@ absl::Status AllGatherStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> re
     return absl::OkStatus();
 }
 
-absl::Status AllGatherDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
-                          int64_t request_buffer) {
+absl::Status AllGatherDone(ffi::AnyBuffer recv_buffer, ffi::AnyBuffer send_echo,
+                          ffi::Result<ffi::AnyBuffer> result, int64_t request_buffer) {
     (void)recv_buffer;
+    (void)send_echo;
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
@@ -231,11 +234,6 @@ absl::Status CollectivePermuteStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBu
                                                             device_assignment, my_replica, my_partition);
         if (!source_dev.ok()) return source_dev.status();
         if (!target_dev.ok()) return target_dev.status();
-        // ResolvePermuteRank resolves a raw id relative to *my own* other
-        // coordinate -- so *source_dev only actually names "the source of
-        // this pair" if I'm the pair's target (source_id's role), and vice
-        // versa; check against my_rank the same way the original
-        // rank-equals-replica-id logic did, just through the resolved rank.
         if (*target_dev == my_rank) source_rank = *source_dev;
         if (*source_dev == my_rank) target_ranks.push_back(*target_dev);
     }
@@ -270,9 +268,10 @@ absl::Status CollectivePermuteStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBu
     return absl::OkStatus();
 }
 
-absl::Status CollectivePermuteDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
-                                   int64_t request_buffer) {
+absl::Status CollectivePermuteDone(ffi::AnyBuffer recv_buffer, ffi::AnyBuffer send_echo,
+                                   ffi::Result<ffi::AnyBuffer> result, int64_t request_buffer) {
     (void)recv_buffer;
+    (void)send_echo;
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
@@ -353,9 +352,10 @@ absl::Status AllToAllStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> rec
     return absl::OkStatus();
 }
 
-absl::Status AllToAllDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffer> result,
-                         int64_t request_buffer) {
+absl::Status AllToAllDone(ffi::AnyBuffer recv_buffer, ffi::AnyBuffer send_echo,
+                         ffi::Result<ffi::AnyBuffer> result, int64_t request_buffer) {
     (void)recv_buffer;
+    (void)send_echo;
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
 }
 
@@ -393,8 +393,9 @@ absl::Status SendStart(ffi::AnyBuffer input, ffi::Token incoming_token,
     return absl::OkStatus();
 }
 
-absl::Status SendDone(ffi::Token incoming_token, ffi::Result<ffi::Token> outgoing_token,
-                      int64_t request_buffer) {
+absl::Status SendDone(ffi::AnyBuffer send_echo, ffi::Token incoming_token,
+                      ffi::Result<ffi::Token> outgoing_token, int64_t request_buffer) {
+    (void)send_echo;
     (void)incoming_token;
     (void)outgoing_token;
     return reinterpret_cast<MpiRequestBuffer*>(request_buffer)->MpiWait();
@@ -466,6 +467,7 @@ XLA_FFI_DEFINE_HANDLER(kAllReduceStart, AllReduceStart,
 XLA_FFI_DEFINE_HANDLER(kAllReduceDone, AllReduceDone,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
+                           .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
 
@@ -489,6 +491,7 @@ XLA_FFI_DEFINE_HANDLER(kReduceScatterStart, ReduceScatterStart,
 XLA_FFI_DEFINE_HANDLER(kReduceScatterDone, ReduceScatterDone,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
+                           .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
 
@@ -510,6 +513,7 @@ XLA_FFI_DEFINE_HANDLER(kAllGatherStart, AllGatherStart,
 XLA_FFI_DEFINE_HANDLER(kAllGatherDone, AllGatherDone,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
+                           .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
 
@@ -529,6 +533,7 @@ XLA_FFI_DEFINE_HANDLER(kCollectivePermuteStart, CollectivePermuteStart,
 
 XLA_FFI_DEFINE_HANDLER(kCollectivePermuteDone, CollectivePermuteDone,
                        ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
                            .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
@@ -552,6 +557,7 @@ XLA_FFI_DEFINE_HANDLER(kAllToAllStart, AllToAllStart,
 
 XLA_FFI_DEFINE_HANDLER(kAllToAllDone, AllToAllDone,
                        ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
                            .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
                            .Attr<int64_t>("request_buffer"));
@@ -588,6 +594,7 @@ XLA_FFI_DEFINE_HANDLER(kSendStart, SendStart,
 
 XLA_FFI_DEFINE_HANDLER(kSendDone, SendDone,
                        ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
                            .Arg<ffi::Token>()
                            .Ret<ffi::Token>()
                            .Attr<int64_t>("request_buffer"));
