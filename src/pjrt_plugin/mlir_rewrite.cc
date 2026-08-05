@@ -331,7 +331,7 @@ void RewriteAsAsyncAllGather(mlir::stablehlo::AllGatherOp op, const ProgramInfo&
 bool MatchCollectivePermuteForAsyncRewrite(mlir::stablehlo::CollectivePermuteOp) { return true; }
 
 void RewriteAsAsyncCollectivePermute(mlir::stablehlo::CollectivePermuteOp op,
-                                     const ProgramInfo& program_info) {
+                                     const ProgramInfo& program_info, int32_t p2p_tag) {
     mlir::OpBuilder builder(op);
     mlir::MLIRContext* context = op.getContext();
     mlir::Location loc = op.getLoc();
@@ -346,7 +346,10 @@ void RewriteAsAsyncCollectivePermute(mlir::stablehlo::CollectivePermuteOp op,
     ProcessGroupStrategy strategy = ResolvePermuteFamilyStrategy(channel_id);
     mlir::NamedAttribute request_buffer = MakeRequestBufferAttr(builder);
 
-    llvm::SmallVector<mlir::NamedAttribute, 8> config_attrs = {request_buffer};
+    llvm::SmallVector<mlir::NamedAttribute, 8> config_attrs = {
+        builder.getNamedAttr("p2p_tag", builder.getI32IntegerAttr(p2p_tag)),
+        request_buffer,
+    };
     if (!AppendProcessGroupAttrs(builder, op.getSourceTargetPairs(), strategy, program_info,
                                 /*include_group_metadata=*/false, /*include_my_rank=*/true, config_attrs)) {
         LOG(FATAL) << "MatchCollectivePermuteForAsyncRewrite verified source_target_pairs is "
@@ -390,7 +393,8 @@ bool MatchAllToAllForAsyncRewrite(mlir::stablehlo::AllToAllOp op) {
 
 // TODO: Currently splits the multi-operand form into independent segments.
 // Consider if it's ever beneficial to group them and use MPI_WaitAll
-void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& program_info) {
+void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& program_info,
+                            int32_t& next_p2p_tag) {
     mlir::OpBuilder builder(op);
     mlir::MLIRContext* context = op.getContext();
     mlir::Location loc = op.getLoc();
@@ -410,6 +414,7 @@ void RewriteAsAsyncAllToAll(mlir::stablehlo::AllToAllOp op, const ProgramInfo& p
             builder.getNamedAttr("split_dimension", builder.getI64IntegerAttr(op.getSplitDimension())),
             builder.getNamedAttr("concat_dimension", builder.getI64IntegerAttr(op.getConcatDimension())),
             builder.getNamedAttr("split_count", builder.getI64IntegerAttr(op.getSplitCount())),
+            builder.getNamedAttr("p2p_tag", builder.getI32IntegerAttr(next_p2p_tag++)),
             request_buffer,
         };
         if (!AppendProcessGroupAttrs(builder, op.getReplicaGroups(), strategy, program_info,
@@ -624,19 +629,23 @@ void RewriteCollectivesAsAsync(mlir::func::FuncOp entry, const ProgramInfo& prog
         RewriteAsAsyncAllGather(op, program_info, next_group_tag);
     }
 
+    int32_t next_p2p_tag = 0;
+
     llvm::SmallVector<mlir::stablehlo::CollectivePermuteOp> collective_permute_rewrites;
     entry.walk([&](mlir::stablehlo::CollectivePermuteOp op) {
         if (MatchCollectivePermuteForAsyncRewrite(op)) collective_permute_rewrites.push_back(op);
     });
     for (mlir::stablehlo::CollectivePermuteOp op : collective_permute_rewrites) {
-        RewriteAsAsyncCollectivePermute(op, program_info);
+        RewriteAsAsyncCollectivePermute(op, program_info, next_p2p_tag++);
     }
 
     llvm::SmallVector<mlir::stablehlo::AllToAllOp> all_to_all_rewrites;
     entry.walk([&](mlir::stablehlo::AllToAllOp op) {
         if (MatchAllToAllForAsyncRewrite(op)) all_to_all_rewrites.push_back(op);
     });
-    for (mlir::stablehlo::AllToAllOp op : all_to_all_rewrites) RewriteAsAsyncAllToAll(op, program_info);
+    for (mlir::stablehlo::AllToAllOp op : all_to_all_rewrites) {
+        RewriteAsAsyncAllToAll(op, program_info, next_p2p_tag);
+    }
 
     llvm::SmallVector<mlir::stablehlo::SendOp> send_rewrites;
     entry.walk([&](mlir::stablehlo::SendOp op) {

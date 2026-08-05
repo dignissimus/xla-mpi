@@ -212,13 +212,11 @@ absl::Status AllGatherDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::AnyBuffe
 }
 
 absl::Status CollectivePermuteStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,
-                                    absl::Span<const int64_t> groups, int32_t process_group_strategy,
-                                    int64_t num_partitions, absl::Span<const int64_t> device_assignment,
-                                    int64_t my_rank, int64_t my_replica, int64_t my_partition,
-                                    int64_t request_buffer) {
-    // TODO: Check if it's OK to use 0 as a tag. Rationale is that there is
-    // only one CollectivePermute at a time, but unsure if this is true
-    constexpr int kTag = 0;
+                                    int32_t p2p_tag, absl::Span<const int64_t> groups,
+                                    int32_t process_group_strategy, int64_t num_partitions,
+                                    absl::Span<const int64_t> device_assignment, int64_t my_rank,
+                                    int64_t my_replica, int64_t my_partition, int64_t request_buffer) {
+    const int kTag = p2p_tag;
     size_t num_bytes = input.size_bytes();
     auto strategy = static_cast<ProcessGroupStrategy>(process_group_strategy);
 
@@ -280,7 +278,7 @@ absl::Status CollectivePermuteDone(ffi::AnyBuffer recv_buffer, ffi::Result<ffi::
 
 absl::Status AllToAllStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> recv,
                            int64_t split_dimension, int64_t concat_dimension, int64_t split_count,
-                           absl::Span<const int64_t> groups, int64_t num_groups,
+                           int32_t p2p_tag, absl::Span<const int64_t> groups, int64_t num_groups,
                            int32_t process_group_strategy, int64_t num_partitions,
                            absl::Span<const int64_t> device_assignment, int64_t my_replica,
                            int64_t my_partition, int64_t request_buffer) {
@@ -308,7 +306,7 @@ absl::Status AllToAllStart(ffi::AnyBuffer input, ffi::Result<ffi::AnyBuffer> rec
 
     std::vector<MPI_Request> requests;
     std::vector<MPI_Datatype> types;
-    constexpr int kTag = 0;
+    const int kTag = p2p_tag;
 
     auto fail = [&](absl::Status status) {
         for (MPI_Datatype t : types) MPI_Type_free(&t);
@@ -519,6 +517,7 @@ XLA_FFI_DEFINE_HANDLER(kCollectivePermuteStart, CollectivePermuteStart,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()
                            .Ret<ffi::AnyBuffer>()
+                           .Attr<int32_t>("p2p_tag")
                            .Attr<absl::Span<const int64_t>>("groups")
                            .Attr<int32_t>("process_group_strategy")
                            .Attr<int64_t>("num_partitions")
@@ -541,6 +540,7 @@ XLA_FFI_DEFINE_HANDLER(kAllToAllStart, AllToAllStart,
                            .Attr<int64_t>("split_dimension")
                            .Attr<int64_t>("concat_dimension")
                            .Attr<int64_t>("split_count")
+                           .Attr<int32_t>("p2p_tag")
                            .Attr<absl::Span<const int64_t>>("groups")
                            .Attr<int64_t>("num_groups")
                            .Attr<int32_t>("process_group_strategy")
