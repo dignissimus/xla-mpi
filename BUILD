@@ -16,6 +16,10 @@ cc_binary(
         "src/pjrt_plugin/pjrt_api.cc",
     ],
     includes = ["src"],
+    additional_linker_inputs = ["//bazel:pjrt_symbols.lds"],
+    linkopts = [
+        "-Wl,--version-script,$(location //bazel:pjrt_symbols.lds)",
+    ],
     linkshared = 1,
     linkstatic = 1,
     deps = [
