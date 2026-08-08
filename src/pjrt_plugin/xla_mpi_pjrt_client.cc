@@ -1,5 +1,6 @@
 #include "pjrt_plugin/xla_mpi_pjrt_client.h"
 #include "pjrt_plugin/mlir_rewrite.h"
+#include "pjrt_plugin/mpi_collectives.h"
 #include "pjrt_plugin/mpi_process_group.h"
 
 #include <mpi.h>
@@ -72,6 +73,11 @@ ProgramInfo BuildProgramInfo(const xla::ExecutableBuildOptions& build_options) {
 }
 
 }  // namespace
+
+XlaMpiPjRtClient::~XlaMpiPjRtClient() {
+    wrapped_.reset();
+    GetMpiSingleton().Finalize();
+}
 
 absl::StatusOr<std::unique_ptr<xla::PjRtExecutable>> XlaMpiPjRtClient::Compile(
     xla::MaybeOwningMlirModule module, xla::CompileOptions options) {

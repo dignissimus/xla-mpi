@@ -37,7 +37,7 @@ namespace xla_mpi {
 class XlaMpiPjRtClient : public xla::PjRtClient {
 public:
     explicit XlaMpiPjRtClient(std::unique_ptr<xla::PjRtClient> wrapped) : wrapped_(std::move(wrapped)) {}
-    ~XlaMpiPjRtClient() override = default;
+    ~XlaMpiPjRtClient() override;
 
     int process_index() const override { return wrapped_->process_index(); }
     int device_count() const override { return wrapped_->device_count(); }
